@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: kayi-pdf-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.11
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: FSUB_CHANNEL
+        value: "@KayiBots"
+      - key: FSUB_INVITE_URL
+        value: https://t.me/KayiBots
+      - key: WEBHOOK_AUTO_SET
+        value: "true"
+      - key: LOG_LEVEL
+        value: INFO
