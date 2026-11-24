@@ -6,7 +6,9 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
+from app.services import image_ops
 from app.services.cancellation import CancelToken
 from app.services.errors import ImageValidationError, JobCancelled
 from app.services.image_ops import images_to_pdf, inspect_image
@@ -21,6 +23,7 @@ def test_inspect_jpeg_and_png(image_factory, settings) -> None:
     assert (jpeg_info.width, jpeg_info.height, jpeg_info.format) == (120, 80, "JPEG")
     assert (png_info.width, png_info.height, png_info.format) == (64, 32, "PNG")
     assert jpeg_info.size == jpeg.stat().st_size
+    assert (jpeg_info.mode, jpeg_info.orientation) == ("RGB", 1)
 
 
 def test_inspect_rejects_unsupported_format(image_factory, settings) -> None:
@@ -70,6 +73,60 @@ def test_images_to_pdf_combines_in_order(image_factory, settings, tmp_path) -> N
     assert widths == [48.0, 28.8]
     assert pdf_metadata(output).get("/Producer") == "Kayi PDF Bot"
     assert not list(tmp_path.glob("page_*.pdf"))
+
+
+def test_images_to_pdf_embeds_jpeg_stream_losslessly(
+    image_factory, settings, tmp_path
+) -> None:
+    path = image_factory(size=(100, 50), fmt="JPEG")
+    output = tmp_path / "lossless.pdf"
+    images_to_pdf([path], output, settings)
+    assert path.read_bytes() in output.read_bytes()
+
+
+def test_images_to_pdf_strips_jpeg_metadata(settings, tmp_path) -> None:
+    path = tmp_path / "private.jpg"
+    image = Image.new("RGB", (80, 40), (10, 20, 30))
+    exif = image.getexif()
+    exif[0x0112] = 1
+    exif[0x010F] = "SecretCamera"
+    image.save(path, "JPEG", exif=exif)
+    image.close()
+
+    output = tmp_path / "clean.pdf"
+    images_to_pdf([path], output, settings)
+    assert pdf_page_count(output) == 1
+    assert b"SecretCamera" not in output.read_bytes()
+
+
+def test_images_to_pdf_falls_back_when_embed_is_too_large(
+    image_factory, settings, tmp_path, monkeypatch
+) -> None:
+    path = image_factory(size=(100, 50), fmt="JPEG")
+    output = tmp_path / "fallback.pdf"
+
+    def oversized(infos, target, token):
+        target.write_bytes(b"not a pdf")
+        return settings.max_output_size_bytes + 1
+
+    monkeypatch.setattr(image_ops, "_embed_jpegs", oversized)
+    images_to_pdf([path], output, settings)
+    assert pdf_page_count(output) == 1
+    assert output.stat().st_size <= settings.max_output_size_bytes
+
+
+def test_images_to_pdf_falls_back_when_embed_fails(
+    image_factory, settings, tmp_path, monkeypatch
+) -> None:
+    path = image_factory(size=(100, 50), fmt="JPEG")
+    output = tmp_path / "fallback.pdf"
+
+    def broken(infos, target, token):
+        raise RuntimeError("unexpected encoder failure")
+
+    monkeypatch.setattr(image_ops, "_embed_jpegs", broken)
+    images_to_pdf([path], output, settings)
+    assert pdf_page_count(output) == 1
 
 
 def test_images_to_pdf_applies_exif_orientation(image_factory, settings, tmp_path) -> None:

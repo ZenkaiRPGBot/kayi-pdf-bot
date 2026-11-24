@@ -1,8 +1,8 @@
 # Kayi PDF Bot
 
-A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI**, **pypdf**, and **Pillow**. It runs on a Telegram webhook, works with in-memory state, and is designed to fit a small Render Free instance without Redis, a database, Celery, or paid APIs.
+A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI**, **pypdf**, **Pillow**, and **img2pdf**. It runs on a Telegram webhook, works with in-memory state, and is designed to fit a small Render Free instance without Redis, a database, Celery, or paid APIs.
 
-> **Status:** the source is implemented, verified locally, and published at [ZenkaiRPGBot/kayi-pdf-bot](https://github.com/ZenkaiRPGBot/kayi-pdf-bot). No Render service or webhook has been deployed yet. The test suite currently reports **276 passed** (see [Tests](#tests)).
+> **Status:** the source is implemented, verified locally, and published at [ZenkaiRPGBot/kayi-pdf-bot](https://github.com/ZenkaiRPGBot/kayi-pdf-bot). A Render service builds successfully; live startup and Telegram smoke testing are still pending (see [Render deployment](#render-deployment)). The test suite currently reports **280 passed** (see [Tests](#tests)).
 
 ---
 
@@ -17,6 +17,13 @@ A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI*
 | **Extract Pages** | Keep selected pages, in the requested order, inside one new PDF. Example: `1,3,5-8`. |
 | **Rotate Pages** | Rotate all pages or selected pages by 90°, 180°, or 270° clockwise. |
 | **Images to PDF** | Send 1–10 JPG/PNG images (or Telegram photos), reorder them, and produce one PDF. EXIF orientation is applied, transparency becomes white, and images are never enlarged. |
+
+### Conversion performance
+
+- JPEG photos are embedded directly into the PDF without decoding or re-encoding. EXIF/GPS/XMP/ICC metadata is stripped first, so image quality is preserved and location data is not leaked.
+- The bot automatically falls back to Pillow when an image needs EXIF rotation, downscaling, CMYK conversion, or when direct embedding would exceed the output-size limit.
+- Local benchmark with 10 JPEGs (2000×1500, ~2.4 MB each): image conversion dropped from **3.24 s to 0.24 s** (~13×). Merge, extract, rotate, and split stayed below 0.3 s at the 500-page limit.
+- Direct embedding preserves the original JPEG quality, so the resulting PDF can be larger than the old recompressed output. The configured output limit is still enforced, with automatic fallback to recompression when needed.
 
 ### Telegram UX
 
@@ -228,22 +235,15 @@ POST {WEBHOOK_PATH} → authenticated Telegram webhook
 
 ## Render deployment
 
-`render.yaml` describes a Render Blueprint. It is a deployment definition, **not** evidence that a service exists.
+The public repository is `https://github.com/ZenkaiRPGBot/kayi-pdf-bot`. The Render account and the GitHub owner are different, so the current service uses Render's **Public Git repository** flow instead of a Blueprint. A build has succeeded; live startup and the Telegram smoke test are still pending.
 
-### Via Blueprint
-
-1. Push this directory to a Git repository you control.
-2. In Render, create a new **Blueprint** and point it at that repository.
-3. Provide `BOT_TOKEN` when prompted (`sync: false`).
-4. Render generates `WEBHOOK_SECRET` and injects `RENDER_EXTERNAL_URL`.
-5. Confirm the service starts with `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
-6. Wait for `/health` to return HTTP 200 before sending Telegram updates.
-
-### Manual web service
+### Public Git repository (current approach)
 
 | Setting | Value |
 | --- | --- |
-| Runtime | Python 3.12 |
+| Repository | `https://github.com/ZenkaiRPGBot/kayi-pdf-bot` |
+| Branch | `main` |
+| Runtime | Python 3 |
 | Build command | `pip install -r requirements.txt` |
 | Start command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
 | Health check path | `/health` |
@@ -253,12 +253,19 @@ Set at least:
 
 ```text
 BOT_TOKEN=<from BotFather>
-WEBHOOK_SECRET=<long random value>
 FSUB_CHANNEL=@KayiBots
 FSUB_INVITE_URL=https://t.me/KayiBots
+WEBHOOK_AUTO_SET=true
+PYTHON_VERSION=3.12.11
 ```
 
+Leave `PUBLIC_BASE_URL` unset so Render's `RENDER_EXTERNAL_URL` is used. `WEBHOOK_SECRET` is optional: if set, it may contain only letters, digits, `_`, and `-` (1–256 characters). Render's generated base64 value can contain `+` and `/` and will stop startup with `ConfigError`; if the variable is omitted, the app generates a valid URL-safe secret on each start.
+
 Add the bot as a channel administrator in Telegram. Without that, `getChatMember` can fail and protected actions stay blocked (fail closed).
+
+### Optional Blueprint
+
+`render.yaml` describes the same service for Blueprint users. It intentionally omits `WEBHOOK_SECRET` for the reason above; users who need a fixed secret should add a valid value manually.
 
 ### Telegram registration checklist
 
@@ -271,7 +278,7 @@ Add the bot as a channel administrator in Telegram. Without that, `getChatMember
 - [ ] Join the channel, tap **I've Joined**, and confirm the intended screen returns.
 - [ ] Exercise all five tools with small files.
 
-The Render deployment and live Telegram smoke test have not been performed in this workspace.
+The Render build succeeds, but the live Telegram smoke test is still pending.
 
 ---
 
@@ -375,7 +382,7 @@ Run with the project interpreter:
 Verified result in this workspace:
 
 ```text
-276 passed, 1 warning
+280 passed, 1 warning
 ```
 
 The single warning is a `StarletteDeprecationWarning` from FastAPI/Starlette suggesting `httpx2` for `TestClient`; it does not affect the application or test outcomes.
@@ -385,7 +392,7 @@ Coverage areas include:
 - environment/config validation and URL/channel normalisation
 - text utilities and page/range parsing
 - PDF validation, merge, split, extract, rotate, encryption and limits
-- image validation, EXIF orientation, transparency, dimensions, output limits
+- image validation, EXIF orientation, metadata stripping, transparency, dimensions, output limits, direct-embed and fallback paths
 - job admission, queueing, cancellation, timeout cleanup, thread offload
 - workspace isolation, naming, capacity, stale/orphan cleanup, detached-workspace safety
 - forced-subscription statuses, caching, fail-closed handling, pending destinations
@@ -451,9 +458,9 @@ This is not a hardened multi-tenant service. It is a single-instance bot for a s
 ## Unfinished items and next steps
 
 1. Add the bot to the channel as an administrator, then perform a live smoke test.
-2. Create the Render Blueprint/service. Confirm `/health` and webhook registration in the Render logs.
+2. Finish the Render service configuration. Confirm `/health` and webhook registration in the Render logs.
 3. Test with real-world PDFs (forms, large images, unusual fonts, mixed page sizes, damaged files) and real channel membership transitions.
-4. Add an explicit `WEBHOOK_SECRET` in the hosting dashboard and document a rotation procedure.
+4. Add an explicit URL-safe `WEBHOOK_SECRET` in the hosting dashboard and document a rotation procedure.
 5. Consider optional persistent storage for FSM/pending actions if multi-instance or restart resilience becomes a requirement.
 6. Consider a monitoring/alerting hook for repeated webhook failures, membership-check failures, and queue saturation.
 7. Add a license and contribution guidelines if the project will be shared publicly.
