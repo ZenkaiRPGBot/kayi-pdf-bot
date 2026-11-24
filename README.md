@@ -2,7 +2,7 @@
 
 A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI**, **pypdf**, and **Pillow**. It runs on a Telegram webhook, works with in-memory state, and is designed to fit a small Render Free instance without Redis, a database, Celery, or paid APIs.
 
-> **Status:** the source has been implemented and verified locally. The bot has **not** been created with BotFather, the repository has **not** been published, and no Render service or webhook has been deployed. The test suite currently reports **276 passed** (see [Tests](#tests)).
+> **Status:** the source is implemented, verified locally, and published at [ZenkaiRPGBot/kayi-pdf-bot](https://github.com/ZenkaiRPGBot/kayi-pdf-bot). No Render service or webhook has been deployed yet. The test suite currently reports **276 passed** (see [Tests](#tests)).
 
 ---
 
@@ -262,7 +262,7 @@ Add the bot as a channel administrator in Telegram. Without that, `getChatMember
 
 ### Telegram registration checklist
 
-- [ ] Create the bot with BotFather and keep the token private.
+- [x] Obtain a bot token from BotFather and keep it out of the repository.
 - [ ] Add the bot to `@KayiBots` as an administrator.
 - [ ] Set `BOT_TOKEN` in the hosting environment.
 - [ ] Deploy and confirm `GET /health` returns 200.
@@ -271,7 +271,7 @@ Add the bot as a channel administrator in Telegram. Without that, `getChatMember
 - [ ] Join the channel, tap **I've Joined**, and confirm the intended screen returns.
 - [ ] Exercise all five tools with small files.
 
-None of these live steps have been performed in this workspace.
+The Render deployment and live Telegram smoke test have not been performed in this workspace.
 
 ---
 
@@ -450,8 +450,8 @@ This is not a hardened multi-tenant service. It is a single-instance bot for a s
 
 ## Unfinished items and next steps
 
-1. Create the Telegram bot with BotFather, add it to the channel as an administrator, and perform a live smoke test.
-2. Publish the repository and create the Render Blueprint/service. Confirm `/health` and webhook registration in the Render logs.
+1. Add the bot to the channel as an administrator, then perform a live smoke test.
+2. Create the Render Blueprint/service. Confirm `/health` and webhook registration in the Render logs.
 3. Test with real-world PDFs (forms, large images, unusual fonts, mixed page sizes, damaged files) and real channel membership transitions.
 4. Add an explicit `WEBHOOK_SECRET` in the hosting dashboard and document a rotation procedure.
 5. Consider optional persistent storage for FSM/pending actions if multi-instance or restart resilience becomes a requirement.
