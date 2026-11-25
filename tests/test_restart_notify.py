@@ -33,6 +33,7 @@ def make_notifier(tmp_path: Path, bot: FakeBot, **kwargs) -> RestartNotifier:
         root=tmp_path,
         reason_path=tmp_path / "restart_reason.txt",
         clock=lambda: datetime(2026, 11, 25, 6, 45, tzinfo=IST),
+        retry_delay=kwargs.pop("retry_delay", 0.0),
         **kwargs,
     )
 
@@ -54,10 +55,10 @@ async def test_notification_uses_branded_layout_and_both_recipients(
     assert [entry["chat_id"] for entry in bot.sent] == [111, -100123]
     text = bot.sent[0]["text"]
     assert text.startswith("<b>Kayi PDF Online 🟢</b>")
-    assert "<b>Changes in this Update:</b>" in text
-    assert "• Added numbered image selector" in text
-    assert "• Fixed &lt;preview&gt; reuse" in text
+    assert "<b>Status:</b> Running smoothly" in text
+    assert "<b>Note:</b> Added numbered image selector Fixed &lt;preview&gt; reuse" in text
     assert "<b>Time:</b> <code>06:45 AM IST · Nov 25</code>" in text
+    assert "Changes in this Update" not in text
     assert bot.sent[0]["parse_mode"] == "HTML"
     assert not (tmp_path / "restart_reason.txt").exists()
     assert "abc123" in (tmp_path / "state.json").read_text(encoding="utf-8")
@@ -65,6 +66,21 @@ async def test_notification_uses_branded_layout_and_both_recipients(
     # A second startup hook in the same process must not send again.
     assert await notifier.notify_once() is False
     assert len(bot.sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_notification_without_reason_omits_git_commit_noise(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(restart_module, "current_commit", lambda root=None: "newcommit")
+    bot = FakeBot()
+    notifier = make_notifier(tmp_path, bot)
+
+    assert await notifier.notify_once() is True
+    text = bot.sent[0]["text"]
+    assert "<b>Status:</b> Running smoothly" in text
+    assert "<b>Note:</b>" not in text
+    assert "<b>Time:</b> <code>06:45 AM IST · Nov 25</code>" in text
 
 
 @pytest.mark.asyncio
