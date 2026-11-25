@@ -95,6 +95,10 @@ class Settings:
     bot_token: str = field(default="", repr=False)
     owner_id: int = 0
     log_channel_id: str = ""
+    render_email: str = ""
+    render_service_name: str = APP_NAME
+    render_repo: str = "ZenkaiRPGBot/kayi-pdf-bot"
+    render_used_hours: float = 0.0
     public_base_url: str = ""
     webhook_secret: str = field(default="", repr=False)
     webhook_path: str = "/telegram/webhook"
@@ -211,6 +215,7 @@ class Settings:
             "self_ping_initial_delay", self.self_ping_initial_delay, 0
         )
         self._require_at_least("self_ping_interval", self.self_ping_interval, 1)
+        self._require_at_least("render_used_hours", self.render_used_hours, 0.0)
 
     @staticmethod
     def _require_at_least(name: str, value: int | float, minimum: int | float) -> None:
@@ -280,6 +285,10 @@ def load_settings(*, require_token: bool = True) -> Settings:
         bot_token=token,
         owner_id=_env_int("OWNER_ID", 0, minimum=0),
         log_channel_id=_env("LOG_CHANNEL_ID"),
+        render_email=_env("RENDER_EMAIL"),
+        render_service_name=_env("RENDER_SERVICE_NAME", APP_NAME) or APP_NAME,
+        render_repo=_env("RENDER_REPO", "ZenkaiRPGBot/kayi-pdf-bot") or "ZenkaiRPGBot/kayi-pdf-bot",
+        render_used_hours=_env_float("RENDER_USED_HOURS", 0.0, minimum=0.0),
         # Render injects RENDER_EXTERNAL_URL automatically.  Using it keeps
         # webhook registration working without a second manual URL.
         public_base_url=_normalise_base_url(

@@ -64,6 +64,7 @@ PDF bot/
 │  ├─ handlers/
 │  │  ├─ start.py            # /start, /help, help callbacks, FSub verification
 │  │  ├─ common.py           # /cancel and main-menu navigation
+│  │  ├─ usage.py            # /ping, owner /usage metrics, and set_my_commands registration
 │  │  ├─ menu.py             # Tool selection callbacks
 │  │  ├─ uploads.py          # Direct uploads and operation-choice screen
 │  │  ├─ merge.py            # Merge workflow
@@ -301,14 +302,20 @@ The Render build succeeds, but the live Telegram smoke test is still pending.
 | `DROP_PENDING_UPDATES` | `false` | Passed to `setWebhook`; drops queued Telegram updates on registration. |
 | `LOG_LEVEL` | `INFO` | Logging level. |
 
-### Startup notification
+### Startup notification & hosting metrics
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OWNER_ID` | `0` (disabled) | Numeric Telegram user ID that receives the startup message. |
-| `LOG_CHANNEL_ID` | empty | Optional numeric channel ID or `@username` for a second copy. |
+| `OWNER_ID` | `0` (disabled) | Numeric Telegram user ID for startup alerts and owner `/usage`. |
+| `LOG_CHANNEL_ID` | empty | Optional numeric channel ID or `@username` for a second alert copy. |
+| `RENDER_EMAIL` | empty | Render account email displayed on the owner `/usage` card. |
+| `RENDER_SERVICE_NAME` | `kayi-pdf-bot` | Render service name displayed on `/usage`. |
+| `RENDER_REPO` | `ZenkaiRPGBot/kayi-pdf-bot` | Repository label displayed on `/usage`. |
+| `RENDER_USED_HOURS` | `0.0` | Baseline monthly instance hours for `/usage`. |
 
 When either recipient is set, startup sends one branded **Kayi PDF Online** message with the latest change bullets and the current IST time. Delivery is best-effort and never blocks the webhook runtime. A `restart_reason.txt` in the project root overrides the git commit subject for the next message and is deleted after use. The last notified commit is stored under `TEMP_ROOT` so an unchanged deployment is not announced again.
+
+> **Shared Kayi Bots Baseline:** `/start` (with `/start help` deep-link + optional video), `/help`, `/ping`, owner-only `/usage`, `@KayiBots` FSub, native colored buttons, startup alerts, and Render Free limits.
 
 ### Forced subscription
 

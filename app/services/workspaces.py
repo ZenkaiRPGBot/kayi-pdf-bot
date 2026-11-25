@@ -234,3 +234,24 @@ class WorkspaceManager:
             except OSError:
                 log.warning("Could not inspect stale workspace")
         return removed
+
+    def disk_usage(self) -> tuple[int, int]:
+        """Return ``(total_bytes, file_count)`` for files inside workspace dirs."""
+
+        total_bytes = 0
+        file_count = 0
+        try:
+            entries = list(self.base_dir.iterdir())
+        except OSError:
+            return 0, 0
+        for entry in entries:
+            if not entry.is_dir() or not entry.name.startswith("job_"):
+                continue
+            for root, _, names in os.walk(entry):
+                for name in names:
+                    try:
+                        total_bytes += (Path(root) / name).stat().st_size
+                        file_count += 1
+                    except OSError:
+                        pass
+        return total_bytes, file_count

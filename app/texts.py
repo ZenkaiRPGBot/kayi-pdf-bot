@@ -34,6 +34,7 @@ HELP_TOPICS: dict[str, str] = {
         "main menu.\n\n"
         "✦ Use /start to return to the menu\n"
         "✦ Use /cancel to stop the current task\n"
+        "✦ Use /ping to check bot latency and uptime\n"
         "✦ Results are sent back as a new file"
     ),
     "tools": (

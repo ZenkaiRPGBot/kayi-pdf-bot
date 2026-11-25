@@ -365,6 +365,7 @@ def test_dispatcher_wiring(settings) -> None:
     assert [router.name for router in dispatcher.sub_routers] == [
         "start",
         "common",
+        "usage",
         "menu",
         "merge",
         "split",

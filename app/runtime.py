@@ -12,6 +12,7 @@ from aiohttp import ClientSession, ClientTimeout
 
 from app.bot import AppServices, build_services, create_bot, create_dispatcher
 from app.config import APP_NAME, APP_VERSION, Settings
+from app.handlers.usage import register_bot_commands
 from app.services.restart_notify import build_restart_notifier
 from app.services.webhook import IngressStatus, UpdateIngress
 from app.utils.logging import get_logger
@@ -62,6 +63,11 @@ class TelegramRuntime:
         self._background.append(
             asyncio.create_task(
                 self._notify_restart(), name="kayi-restart-notification"
+            )
+        )
+        self._background.append(
+            asyncio.create_task(
+                self._register_commands(), name="kayi-command-register"
             )
         )
         if self.settings.webhook_auto_set and self.settings.public_base_url:
@@ -176,6 +182,14 @@ class TelegramRuntime:
             raise
         except Exception:
             log.exception("Restart notification task failed")
+
+    async def _register_commands(self) -> None:
+        try:
+            await register_bot_commands(self.bot, self.settings)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Command menu registration task failed")
 
     async def _workspace_cleanup_loop(self) -> None:
         while not self._stopping.is_set():

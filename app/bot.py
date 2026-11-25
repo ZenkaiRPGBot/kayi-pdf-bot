@@ -23,6 +23,7 @@ from app.handlers import (
     split,
     start,
     uploads,
+    usage,
 )
 from app.middleware.fsub import SubscriptionMiddleware
 from app.middleware.user_lock import UserLockManager, UserSerializationMiddleware
@@ -109,6 +110,7 @@ def create_dispatcher(settings: Settings, services: AppServices) -> Dispatcher:
     dp.include_routers(
         start.router,
         common.router,
+        usage.router,
         menu.router,
         merge.router,
         split.router,
