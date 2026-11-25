@@ -37,13 +37,13 @@ def main_menu_keyboard(settings: Settings) -> InlineKeyboardMarkup:
                 _button("Split PDF", "menu:split", style="primary"),
             ),
             _row(
-                _button("Extract Pages", "menu:extract", style="primary"),
-                _button("Rotate Pages", "menu:rotate", style="primary"),
+                _button("Extract Pages", "menu:extract", style="success"),
+                _button("Rotate Pages", "menu:rotate", style="success"),
             ),
-            _row(_button("Images to PDF", "menu:images", style="primary")),
+            _row(_button("Images to PDF", "menu:images")),
             _row(
-                _url_button("📢 Updates", "https://t.me/KayiBots", style="primary"),
-                _url_button("👨‍💻 Developer", "https://t.me/qouba"),
+                _url_button("📢 Updates", "https://t.me/KayiBots", style="danger"),
+                _url_button("👨‍💻 Developer", "https://t.me/qouba", style="danger"),
             ),
         ]
     )

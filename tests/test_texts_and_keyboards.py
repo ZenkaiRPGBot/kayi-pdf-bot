@@ -78,6 +78,18 @@ def test_main_menu_has_exactly_the_expected_rows() -> None:
     assert all("help" not in (data or "") for row in rows for _, data in row)
 
 
+def test_main_menu_button_colors() -> None:
+    markup = main_menu_keyboard(Settings())
+    assert [
+        [button.style for button in row] for row in markup.inline_keyboard
+    ] == [
+        ["primary", "primary"],
+        ["success", "success"],
+        [None],
+        ["danger", "danger"],
+    ]
+
+
 def test_subscribe_keyboard_uses_channel_url_and_verify() -> None:
     settings = Settings()
     rows = callback_rows(subscribe_keyboard(settings))
