@@ -52,6 +52,7 @@ HELP_TOPICS: dict[str, str] = {
         "<b>Images to PDF</b>\n\n"
         "Send 1–10 JPG or PNG images. Telegram photos are supported too.\n\n"
         "✦ Images keep the order shown\n"
+        "✦ Use ← → to preview, ↑ ↓ to reorder\n"
         "✦ Reorder or remove images before converting\n"
         "✦ Transparent areas become white\n"
         "✦ Images are not enlarged"
@@ -115,6 +116,7 @@ def _images_help_text(settings: Settings) -> str:
         f"Send 1–{settings.max_images} JPG or PNG images. "
         "Telegram photos are supported too.\n\n"
         "✦ Images keep the order shown\n"
+        "✦ Use ← → to preview, ↑ ↓ to reorder\n"
         "✦ Reorder or remove images before converting\n"
         "✦ Transparent areas become white\n"
         "✦ Images are not enlarged"
@@ -167,7 +169,7 @@ def resend_after_verify_text() -> str:
     )
 
 
-def _file_line(index: int, item: dict, *, pages: bool = True) -> str:
+def _file_line(index: int, item: dict, *, pages: bool = True, active: bool = False) -> str:
     name = truncate(escape(str(item.get("name", "file"))), 52)
     suffix = ""
     if pages and item.get("page_count"):
@@ -175,7 +177,8 @@ def _file_line(index: int, item: dict, *, pages: bool = True) -> str:
         suffix = f" — {count} page{'s' if count != 1 else ''}"
     elif item.get("size"):
         suffix = f" — {format_bytes(int(item['size']))}"
-    return f"{index}. {name}{suffix}"
+    marker = "▶ " if active else ""
+    return f"{marker}{index}. {name}{suffix}"
 
 
 def merge_text(files: list[dict], settings: Settings) -> str:
@@ -277,13 +280,20 @@ def images_intro_text(settings: Settings) -> str:
         "<b>Images to PDF</b>\n\n"
         f"Send 1–{settings.max_images} JPG or PNG images. "
         "They will be added in the order received.\n\n"
-        "✦ Use the arrows to reorder\n"
+        "✦ Use ← → to preview images\n"
+        "✦ Use ↑ ↓ to reorder\n"
         "✦ Use ✖ to remove an image\n"
         "✦ Tap Convert to PDF when ready"
     )
 
 
-def images_text(items: list[dict], settings: Settings) -> str:
+def images_text(
+    items: list[dict],
+    settings: Settings,
+    *,
+    active_id: str | None = None,
+    limit: int = 3800,
+) -> str:
     if not items:
         return images_intro_text(settings)
     lines = [
@@ -293,11 +303,16 @@ def images_text(items: list[dict], settings: Settings) -> str:
         "",
     ]
     lines.extend(
-        _file_line(index, item, pages=False)
+        _file_line(
+            index,
+            item,
+            pages=False,
+            active=active_id is not None and item.get("id") == active_id,
+        )
         for index, item in enumerate(items, start=1)
     )
     lines.extend(["", "Use the arrows to reorder, ✖ to remove, then tap Convert to PDF."])
-    return paginate_text(lines)
+    return paginate_text(lines, limit=limit)
 
 
 def upload_choice_text(media_kind: str, name: str, page_count: int | None = None) -> str:

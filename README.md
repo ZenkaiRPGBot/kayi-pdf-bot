@@ -16,7 +16,7 @@ A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI*
 | **Split PDF** | Send one PDF and comma-separated ranges such as `1-3,4-6,7-10`. Each range becomes a separate PDF. Up to 3 files are sent individually; larger results are packed into a ZIP. |
 | **Extract Pages** | Keep selected pages, in the requested order, inside one new PDF. Example: `1,3,5-8`. |
 | **Rotate Pages** | Rotate all pages or selected pages by 90°, 180°, or 270° clockwise. |
-| **Images to PDF** | Send 1–10 JPG/PNG images (or Telegram photos), reorder them, and produce one PDF. EXIF orientation is applied, transparency becomes white, and images are never enlarged. |
+| **Images to PDF** | Send 1–10 JPG/PNG images (or Telegram photos), preview them with ← / →, reorder them, and produce one PDF. EXIF orientation is applied, transparency becomes white, and images are never enlarged. |
 
 ### Conversion performance
 
@@ -31,6 +31,7 @@ A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI*
 - Optional welcome video via `WELCOME_VIDEO_FILE_ID`, with a text fallback if Telegram rejects the video.
 - Send a PDF or image directly and choose an operation immediately.
 - Inline queue controls for merging and image conversion: reorder, remove, confirm.
+- The Images to PDF workspace shows the selected image as Telegram photo media. A `← | n / total | →` row previews images by queue position, while the numbered buttons still control the final PDF order. Telegram photo file IDs are reused; document uploads get a 720 px thumbnail that is cached for the workflow and never used for the PDF itself.
 - `/start`, `/start help`, `/help`, `/cancel`, topic-based help, and safe stale-button handling.
 - Clear progress, result, validation, and error messages.
 - Forced channel subscription with a 45-second positive membership cache, fail-closed behaviour, and restoration of the user's intended destination after verification.
@@ -86,6 +87,7 @@ PDF bot/
 │  │  ├─ navigation.py       # Menu opening, help, post-verification restoration
 │  │  ├─ page_ranges.py      # Strict page/range parsing
 │  │  ├─ pdf_ops.py          # Validate, merge, split, extract, rotate
+│  │  ├─ previews.py         # Cached 720 px image previews for the workspace
 │  │  ├─ webhook.py          # Bounded ingress and update dedupe
 │  │  ├─ welcome.py          # Welcome video with safe text fallback
 │  │  └─ workspaces.py       # Isolated temp directories and cleanup
