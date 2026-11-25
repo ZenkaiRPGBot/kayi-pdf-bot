@@ -85,12 +85,23 @@ async def open_tool(
         )
     elif tool == "images":
         await state.set_state(ImagesStates.collecting)
-        await state.set_data({"owner_id": user_id, "files": [], "queue_message_id": None})
-        await bot.send_message(
+        await state.set_data(
+            {
+                "owner_id": user_id,
+                "files": [],
+                "queue_message_id": None,
+                "queue_kind": "text",
+                "preview_id": None,
+                "preview_file_ids": {},
+                "preview_unavailable": [],
+            }
+        )
+        sent = await bot.send_message(
             chat_id,
             images_intro_text(settings),
             reply_markup=images_queue_keyboard(0),
         )
+        await state.update_data(queue_message_id=sent.message_id)
     else:
         raise ValueError(f"Unknown tool: {tool}")
 

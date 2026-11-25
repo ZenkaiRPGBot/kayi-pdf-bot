@@ -11,8 +11,13 @@ def _row(*buttons: InlineKeyboardButton) -> list[InlineKeyboardButton]:
     return list(buttons)
 
 
-def _button(text: str, callback_data: str) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, callback_data=callback_data)
+def _button(
+    text: str,
+    callback_data: str,
+    *,
+    style: str | None = None,
+) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=text, callback_data=callback_data, style=style)
 
 
 def _url_button(text: str, url: str) -> InlineKeyboardButton:
@@ -110,18 +115,36 @@ def merge_queue_keyboard(file_count: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def images_queue_keyboard(image_count: int) -> InlineKeyboardMarkup:
+def images_queue_keyboard(
+    image_count: int,
+    *,
+    active_index: int | None = None,
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    if image_count:
+        current = 0 if active_index is None else active_index
+        current = max(0, min(current, image_count - 1))
+        rows.append(
+            _row(
+                _button("←", "images:prev", style="primary"),
+                _button(f"{current + 1} / {image_count}", "images:pos"),
+                _button("→", "images:next", style="primary"),
+            )
+        )
     for index in range(image_count):
         controls: list[InlineKeyboardButton] = []
         if index > 0:
             controls.append(_button(f"↑ {index + 1}", f"images:up:{index}"))
         if index < image_count - 1:
             controls.append(_button(f"↓ {index + 1}", f"images:down:{index}"))
-        controls.append(_button(f"✖ {index + 1}", f"images:remove:{index}"))
+        controls.append(
+            _button(f"✖ {index + 1}", f"images:remove:{index}", style="danger")
+        )
         rows.append(controls)
     if image_count:
-        rows.append(_row(_button("✅ Convert to PDF", "images:go")))
+        rows.append(
+            _row(_button("✅ Convert to PDF", "images:go", style="success"))
+        )
     rows.append(_row(_button("← Main Menu", "menu:home")))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

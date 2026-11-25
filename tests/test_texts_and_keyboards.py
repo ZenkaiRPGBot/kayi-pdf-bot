@@ -126,9 +126,27 @@ def test_merge_queue_keyboard_controls() -> None:
 
 def test_images_queue_keyboard_controls() -> None:
     rows = callback_rows(images_queue_keyboard(2))
-    assert rows[0] == [("↓ 1", "images:down:0"), ("✖ 1", "images:remove:0")]
-    assert rows[1] == [("↑ 2", "images:up:1"), ("✖ 2", "images:remove:1")]
-    assert rows[2] == [("✅ Convert to PDF", "images:go")]
+    assert rows[0] == [("←", "images:prev"), ("1 / 2", "images:pos"), ("→", "images:next")]
+    assert rows[1] == [("↓ 1", "images:down:0"), ("✖ 1", "images:remove:0")]
+    assert rows[2] == [("↑ 2", "images:up:1"), ("✖ 2", "images:remove:1")]
+    assert rows[3] == [("✅ Convert to PDF", "images:go")]
+    assert rows[4] == [("← Main Menu", "menu:home")]
+
+    positioned = callback_rows(images_queue_keyboard(3, active_index=2))
+    assert positioned[0] == [("←", "images:prev"), ("3 / 3", "images:pos"), ("→", "images:next")]
+    assert callback_rows(images_queue_keyboard(0)) == [[("← Main Menu", "menu:home")]]
+
+
+def test_images_queue_keyboard_native_styles() -> None:
+    markup = images_queue_keyboard(2, active_index=0)
+    payload = markup.model_dump(exclude_none=True)
+    preview = payload["inline_keyboard"][0]
+    assert preview[0]["style"] == "primary"
+    assert "style" not in preview[1]
+    assert preview[2]["style"] == "primary"
+    assert payload["inline_keyboard"][1][1]["style"] == "danger"
+    assert payload["inline_keyboard"][3][0]["style"] == "success"
+    assert "style" not in payload["inline_keyboard"][4][0]
 
 
 def test_rotate_keyboard_reflects_scope() -> None:
@@ -226,11 +244,18 @@ def test_rotate_scope_is_compacted_for_large_selections() -> None:
 def test_images_copy() -> None:
     settings = Settings()
     assert "1–10" in images_text([], settings)
-    items = [{"name": "a.jpg", "size": 2048}, {"name": "b.png", "size": 1024}]
+    items = [
+        {"id": "first", "name": "a.jpg", "size": 2048},
+        {"id": "second", "name": "b.png", "size": 1024},
+    ]
     text = images_text(items, settings)
     assert "a.jpg" in text and "2 KB" in text
     assert "b.png" in text
     assert "Convert to PDF" in text
+    marked = images_text(items, settings, active_id="second")
+    assert "▶ 2. b.png" in marked
+    assert "▶ 1. a.jpg" not in marked
+    assert len(images_text(items, settings, limit=100)) <= 101
 
 
 def test_result_and_error_copy() -> None:

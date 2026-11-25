@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.config import Settings
+from app.handlers.images import render_images_queue
 from app.handlers.shared import (
     document_is_image,
     document_is_pdf,
@@ -15,12 +16,12 @@ from app.handlers.shared import (
 )
 from app.keyboards.main import (
     back_to_menu_keyboard,
-    images_queue_keyboard,
     merge_queue_keyboard,
     rotate_keyboard,
     upload_choice_keyboard,
 )
 from app.services.errors import KayiPdfError
+from app.services.previews import new_item_id
 from app.services.workspaces import WorkspaceManager
 from app.states.workflows import (
     ExtractStates,
@@ -33,7 +34,6 @@ from app.states.workflows import (
 from app.texts import (
     expired_text,
     extract_ready_text,
-    images_text,
     merge_text,
     rotate_ready_text,
     split_ready_text,
@@ -106,6 +106,9 @@ async def _store_choice(
         "size": downloaded.size,
         "page_count": downloaded.page_count,
         "digest": downloaded.digest,
+        "photo_file_id": (
+            message.photo[-1].file_id if message.photo else None
+        ),
     }
     await state.set_data(data)
     sent = await message.answer(
@@ -192,6 +195,7 @@ async def choose_operation(
         "size": int(data.get("size") or 0),
         "page_count": int(data.get("page_count") or 0),
         "digest": data.get("digest"),
+        "photo_file_id": data.get("photo_file_id"),
     }
     if choice == "merge":
         await state.clear()
@@ -208,17 +212,22 @@ async def choose_operation(
         return
     if choice == "images":
         image_item = {key: item[key] for key in ("name", "stored_name", "size")}
+        image_item["id"] = new_item_id()
+        if item.get("photo_file_id"):
+            image_item["photo_file_id"] = item["photo_file_id"]
+        data = {
+            "owner_id": user.id,
+            "files": [image_item],
+            "queue_message_id": None,
+            "queue_kind": None,
+            "preview_id": image_item["id"],
+            "preview_file_ids": {},
+            "preview_unavailable": [],
+        }
         await state.clear()
         await state.set_state(ImagesStates.collecting)
-        await state.set_data(
-            {"owner_id": user.id, "files": [image_item], "queue_message_id": None}
-        )
-        sent = await bot.send_message(
-            chat_id,
-            images_text([image_item], settings),
-            reply_markup=images_queue_keyboard(1),
-        )
-        await state.update_data(queue_message_id=sent.message_id)
+        await state.set_data(data)
+        await render_images_queue(bot, chat_id, state, data, settings, workspaces)
         return
     base = {
         "owner_id": user.id,
