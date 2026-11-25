@@ -3,17 +3,28 @@ services:
     name: kayi-pdf-bot
     runtime: python
     plan: free
+    region: frankfurt
+    autoDeploy: true
+    maxShutdownDelaySeconds: 30
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.11
+      - key: PYTHONUNBUFFERED
+        value: "1"
       - key: BOT_TOKEN
         sync: false
+      # Owner-only notifications and /usage /restart authorization.
+      # Set these in the Render dashboard; never commit a personal ID.
       - key: OWNER_ID
         sync: false
       - key: LOG_CHANNEL_ID
+        sync: false
+      # Optional: enables owner /restart through Render's zero-downtime deploy
+      # hook. Create it under Settings > Deploy Hook, then paste the secret URL.
+      - key: RENDER_DEPLOY_HOOK_URL
         sync: false
       - key: RENDER_EMAIL
         sync: false

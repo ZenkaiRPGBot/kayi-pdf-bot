@@ -104,8 +104,18 @@ class SubscriptionService:
                 )
             ):
                 self.invalidate(user_id)
+                log.info(
+                    "FSUB_DENY user_id=%s status=not_found channel=%s",
+                    user_id,
+                    self.channel,
+                )
                 return MembershipResult(MembershipStatus.NOT_MEMBER, "not_found")
-            log.warning("Membership check failed: %s", type(exc).__name__)
+            log.warning(
+                "FSUB_TG_ERROR user_id=%s channel=%s error=%s",
+                user_id,
+                self.channel,
+                type(exc).__name__,
+            )
             return MembershipResult(MembershipStatus.UNAVAILABLE, "bad_request")
         except (
             TelegramRetryAfter,
@@ -114,10 +124,28 @@ class SubscriptionService:
             TelegramUnauthorizedError,
             TimeoutError,
         ) as exc:
-            log.warning("Membership check unavailable: %s", type(exc).__name__)
+            if isinstance(exc, TimeoutError):
+                log.warning(
+                    "FSUB_TIMEOUT user_id=%s channel=%s timeout=%ss",
+                    user_id,
+                    self.channel,
+                    getattr(exc, "timeout", "unknown"),
+                )
+            else:
+                log.warning(
+                    "FSUB_TG_ERROR user_id=%s channel=%s error=%s",
+                    user_id,
+                    self.channel,
+                    type(exc).__name__,
+                )
             return MembershipResult(MembershipStatus.UNAVAILABLE, "telegram_error")
         except Exception as exc:  # fail closed, but keep the bot alive
-            log.warning("Membership check failed unexpectedly: %s", type(exc).__name__)
+            log.error(
+                "FSUB_UNEXPECTED_ERROR user_id=%s channel=%s error=%s",
+                user_id,
+                self.channel,
+                type(exc).__name__,
+            )
             return MembershipResult(MembershipStatus.UNAVAILABLE, "unexpected")
 
         raw_status = getattr(member, "status", "")
@@ -125,6 +153,12 @@ class SubscriptionService:
         status = str(status).lower()
         if status in {"creator", "administrator", "member"}:
             self._store(user_id)
+            log.info(
+                "FSUB_ALLOW user_id=%s status=%s channel=%s",
+                user_id,
+                status,
+                self.channel,
+            )
             return MembershipResult(MembershipStatus.MEMBER, status)
         if status == "restricted":
             # aiogram exposes is_member on restricted members.  A restricted
@@ -135,13 +169,34 @@ class SubscriptionService:
                 is_member = bool(getattr(member, "is_member", False))
             if is_member:
                 self._store(user_id)
+                log.info(
+                    "FSUB_ALLOW user_id=%s status=restricted_member channel=%s",
+                    user_id,
+                    self.channel,
+                )
                 return MembershipResult(MembershipStatus.MEMBER, "restricted_member")
             self.invalidate(user_id)
+            log.info(
+                "FSUB_DENY user_id=%s status=restricted channel=%s",
+                user_id,
+                self.channel,
+            )
             return MembershipResult(MembershipStatus.NOT_MEMBER, "restricted")
         if status in {"left", "kicked"}:
             self.invalidate(user_id)
+            log.info(
+                "FSUB_DENY user_id=%s status=%s channel=%s",
+                user_id,
+                status,
+                self.channel,
+            )
             return MembershipResult(MembershipStatus.NOT_MEMBER, status)
-        log.warning("Unknown chat member status: %s", status or "empty")
+        log.warning(
+            "FSUB_UNKNOWN_STATUS user_id=%s channel=%s status=%s",
+            user_id,
+            self.channel,
+            status or "empty",
+        )
         return MembershipResult(MembershipStatus.UNAVAILABLE, "unknown_status")
 
 

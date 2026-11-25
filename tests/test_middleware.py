@@ -60,13 +60,29 @@ class SpySubscription:
         ("/start@KayiPDFBot", True),
         ("/cancel", True),
         ("/cancel@KayiPDFBot now", True),
+        ("/usage", False),
+        ("/render", False),
+        ("/status", False),
+        ("/stats", False),
+        ("/restart", False),
+        ("/restart@KayiPDFBot maintenance", False),
         ("/help", False),
+        ("/privacy", False),
         ("hello", False),
         ("", False),
     ],
 )
 def test_message_exemptions(text: str, expected: bool) -> None:
     assert is_exempt(make_message(text)) is expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["/usage", "/render", "/status", "/stats", "/restart", "/restart maintenance"],
+)
+def test_owner_commands_bypass_the_subscription_gate_for_the_owner(text: str) -> None:
+    assert is_exempt(make_message(text, user_id=7), owner_id=7) is True
+    assert is_exempt(make_message(text, user_id=8), owner_id=7) is False
 
 
 def test_callback_exemption() -> None:
@@ -170,6 +186,37 @@ async def test_start_bypasses_subscription_check(monkeypatch) -> None:
     await middleware(handler, make_message("/start"), {"bot": object()})
     assert called is True
     assert subscription.calls == []
+
+
+@pytest.mark.asyncio
+async def test_owner_telemetry_bypasses_but_non_owner_is_prompted(monkeypatch) -> None:
+    subscription = SpySubscription(MembershipStatus.NOT_MEMBER)
+    middleware = SubscriptionMiddleware(
+        subscription,  # type: ignore[arg-type]
+        PendingActionStore(),
+        Settings(owner_id=7),
+    )
+    calls: list[int] = []
+    prompts: list[str] = []
+
+    async def handler(event, data):
+        calls.append(event.from_user.id)
+
+    async def fake_answer(self, text, reply_markup=None, **kwargs):
+        prompts.append(text)
+        return self
+
+    monkeypatch.setattr(Message, "answer", fake_answer)
+
+    await middleware(handler, make_message("/usage", user_id=7), {"bot": object()})
+    assert calls == [7]
+    assert subscription.calls == []
+    assert prompts == []
+
+    await middleware(handler, make_message("/usage", user_id=8), {"bot": object()})
+    assert calls == [7]
+    assert subscription.calls == [8]
+    assert prompts and "Join Kayi Bots to Continue" in prompts[0]
 
 
 @pytest.mark.asyncio

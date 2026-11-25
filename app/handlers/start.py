@@ -66,6 +66,14 @@ async def help_handler(message: Message) -> None:
     await message.answer(HELP_MAIN_TEXT, reply_markup=help_main_keyboard())
 
 
+@router.message(Command("privacy"))
+async def privacy_handler(message: Message, settings: Settings) -> None:
+    await message.answer(
+        help_topic_text("limits", settings),
+        reply_markup=help_topic_keyboard(),
+    )
+
+
 @router.callback_query(F.data == "help:main")
 async def help_main_callback(callback: CallbackQuery) -> None:
     await callback.answer()

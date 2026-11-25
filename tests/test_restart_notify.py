@@ -9,6 +9,7 @@ import pytest
 
 import app.services.restart_notify as restart_module
 from app.config import ConfigError, Settings, load_settings
+from app.services.restart import write_restart_reason
 from app.services.restart_notify import IST, RestartNotifier
 
 
@@ -110,6 +111,24 @@ async def test_reason_file_forces_notification_for_same_commit(
     assert await notifier.notify_once() is True
     assert len(bot.sent) == 1
     assert "Manual owner restart" in bot.sent[0]["text"]
+    assert not (tmp_path / "restart_reason.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_owner_restart_reason_writer_feeds_the_notifier(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(restart_module, "current_commit", lambda root=None: "abc123")
+    (tmp_path / "state.json").write_text(
+        '{"last_notified_commit": "abc123"}', encoding="utf-8"
+    )
+    write_restart_reason("Planned\nmaintenance", root=tmp_path)
+
+    bot = FakeBot()
+    notifier = make_notifier(tmp_path, bot)
+
+    assert await notifier.notify_once() is True
+    assert "Planned maintenance" in bot.sent[0]["text"]
     assert not (tmp_path / "restart_reason.txt").exists()
 
 

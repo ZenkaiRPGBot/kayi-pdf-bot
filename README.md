@@ -2,7 +2,7 @@
 
 A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI**, **pypdf**, **Pillow**, and **img2pdf**. It runs on a Telegram webhook, works with in-memory state, and is designed to fit a small Render Free instance without Redis, a database, Celery, or paid APIs.
 
-> **Status:** the source is implemented, verified locally, and published at [ZenkaiRPGBot/kayi-pdf-bot](https://github.com/ZenkaiRPGBot/kayi-pdf-bot). A Render service builds successfully; live startup and Telegram smoke testing are still pending (see [Render deployment](#render-deployment)). The test suite currently reports **280 passed** (see [Tests](#tests)).
+> **Status:** the source is implemented, verified locally, and published at [ZenkaiRPGBot/kayi-pdf-bot](https://github.com/ZenkaiRPGBot/kayi-pdf-bot). A Render service builds successfully; live startup and Telegram smoke testing are still pending (see [Render deployment](#render-deployment)). The test suite currently reports **378 passed** (see [Tests](#tests)).
 
 ---
 
@@ -32,10 +32,10 @@ A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI*
 - Send a PDF or image directly and choose an operation immediately.
 - Inline queue controls for merging and image conversion: reorder, remove, confirm.
 - The Images to PDF workspace shows the selected image as Telegram photo media. A `← | n / total | →` row previews images by queue position, while the numbered buttons still control the final PDF order. Telegram photo file IDs are reused; document uploads get a 720 px thumbnail that is cached for the workflow and never used for the PDF itself.
-- `/start`, `/start help`, `/help`, `/cancel`, topic-based help, and safe stale-button handling.
+- `/start`, `/start help`, `/help`, `/privacy`, `/cancel`, `/ping`, owner `/usage` (aliases `/render`, `/status`, `/stats`), topic-based help, and safe stale-button handling.
 - Clear progress, result, validation, and error messages.
 - Forced channel subscription with a 45-second positive membership cache, fail-closed behaviour, and restoration of the user's intended destination after verification.
-- `/start`, `/cancel`, and the **I've Joined** callback bypass the subscription gate so users can always enter or leave.
+- `/start`, `/cancel`, the owner telemetry/restart commands, and the **I've Joined** callback bypass the subscription gate so users can always enter or leave, and the owner can still operate the bot when the channel check is unavailable.
 
 ### Operational behaviour
 
@@ -47,7 +47,8 @@ A production-style Telegram PDF utility bot built with **aiogram 3**, **FastAPI*
 - Per-user temporary workspaces, generated filenames, no public file serving, and cleanup after success, cancellation, validation failure, or shutdown.
 - Deferred cleanup after a timed-out worker actually finishes, so a still-running thread cannot delete a replacement job's files.
 - `/`, `/ping`, and `/health` endpoints; optional self-ping for non-Render keep-alive scenarios.
-- Structured, level-controlled logging without secrets.
+- Owner `/restart [reason]` uses Render's zero-downtime deploy hook when `RENDER_DEPLOY_HOOK_URL` is set, so the current instance stays online until the replacement passes its health check. Outside Render, a supervised Uvicorn/Gunicorn/Hypercorn process receives a graceful `SIGTERM` instead. It never calls `os.execv`, and it refuses when neither path is safe.
+- Structured, level-controlled logging without secrets; unexpected update errors are logged with the update kind and safe user/chat identifiers.
 
 ---
 
@@ -62,9 +63,9 @@ PDF bot/
 │  ├─ runtime.py             # Webhook registration, ingress workers, cleanup loops
 │  ├─ texts.py               # Telegram HTML copy and result/error messages
 │  ├─ handlers/
-│  │  ├─ start.py            # /start, /help, help callbacks, FSub verification
+│  │  ├─ start.py            # /start, /help, /privacy, help callbacks, FSub verification
 │  │  ├─ common.py           # /cancel and main-menu navigation
-│  │  ├─ usage.py            # /ping, owner /usage metrics, and set_my_commands registration
+│  │  ├─ usage.py            # /ping, owner metrics/aliases, /restart, command registration
 │  │  ├─ menu.py             # Tool selection callbacks
 │  │  ├─ uploads.py          # Direct uploads and operation-choice screen
 │  │  ├─ merge.py            # Merge workflow
@@ -89,6 +90,7 @@ PDF bot/
 │  │  ├─ page_ranges.py      # Strict page/range parsing
 │  │  ├─ pdf_ops.py          # Validate, merge, split, extract, rotate
 │  │  ├─ previews.py         # Cached 720 px image previews for the workspace
+│  │  ├─ restart.py          # Owner restart reason and graceful ASGI shutdown
 │  │  ├─ restart_notify.py   # Branded startup notification and duplicate suppression
 │  │  ├─ webhook.py          # Bounded ingress and update dedupe
 │  │  ├─ welcome.py          # Welcome video with safe text fallback
@@ -265,7 +267,7 @@ PYTHON_VERSION=3.12.11
 
 Leave `PUBLIC_BASE_URL` unset so Render's `RENDER_EXTERNAL_URL` is used. `WEBHOOK_SECRET` is optional: if set, it may contain only letters, digits, `_`, and `-` (1–256 characters). Render's generated base64 value can contain `+` and `/` and will stop startup with `ConfigError`; if the variable is omitted, the app generates a valid URL-safe secret on each start.
 
-Optionally set `OWNER_ID` and/or `LOG_CHANNEL_ID` to receive the branded startup notification described under [Environment variables](#startup-notification).
+Optionally set `OWNER_ID` and/or `LOG_CHANNEL_ID` to receive the branded startup notification described under [Environment variables](#startup-notification). Set `RENDER_DEPLOY_HOOK_URL` from **Settings → Deploy Hook** to enable owner `/restart`; without it, the command points the owner to the dashboard instead of risking a stopped instance.
 
 Add the bot as a channel administrator in Telegram. Without that, `getChatMember` can fail and protected actions stay blocked (fail closed).
 
@@ -306,16 +308,17 @@ The Render build succeeds, but the live Telegram smoke test is still pending.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OWNER_ID` | `0` (disabled) | Numeric Telegram user ID for startup alerts and owner `/usage`. |
+| `OWNER_ID` | `0` (disabled) | Numeric Telegram user ID for startup alerts, owner `/usage` (aliases `/render`, `/status`, `/stats`), and `/restart`. |
 | `LOG_CHANNEL_ID` | empty | Optional numeric channel ID or `@username` for a second alert copy. |
-| `RENDER_EMAIL` | empty | Render account email displayed on the owner `/usage` card. |
+| `RENDER_DEPLOY_HOOK_URL` | empty | Secret Render deploy hook used by owner `/restart`; only `https://api.render.com/deploy/` URLs are accepted. |
+| `RENDER_EMAIL` | empty | Render account email shown masked on the owner `/usage` card. |
 | `RENDER_SERVICE_NAME` | `kayi-pdf-bot` | Render service name displayed on `/usage`. |
 | `RENDER_REPO` | `ZenkaiRPGBot/kayi-pdf-bot` | Repository label displayed on `/usage`. |
 | `RENDER_USED_HOURS` | `0.0` | Baseline monthly instance hours for `/usage`. |
 
-When either recipient is set, startup sends one branded **Kayi PDF Online** message with the latest change bullets and the current IST time. Delivery is best-effort and never blocks the webhook runtime. A `restart_reason.txt` in the project root overrides the git commit subject for the next message and is deleted after use. The last notified commit is stored under `TEMP_ROOT` so an unchanged deployment is not announced again.
+When either recipient is set, startup sends one branded **Kayi PDF Online** message with the latest change bullets and the current IST time. Delivery is best-effort and never blocks the webhook runtime. A `restart_reason.txt` in the project root overrides the git commit subject for the next message and is deleted after use; the owner `/restart [reason]` command writes this file before requesting a restart. On Render, the deploy hook starts a fresh instance, so the reason is also confirmed directly in the owner reply. The last notified commit is stored under `TEMP_ROOT` so an unchanged deployment is not announced again.
 
-> **Shared Kayi Bots Baseline:** `/start` (with `/start help` deep-link + optional video), `/help`, `/ping`, owner-only `/usage`, `@KayiBots` FSub, native colored buttons, startup alerts, and Render Free limits.
+> **Shared Kayi Bots Baseline:** `/start` (with `/start help` deep-link + optional video), `/help`, `/privacy`, `/ping`, owner-only `/usage` with `/render`, `/status`, `/stats` aliases and `/restart`, `@KayiBots` FSub, native colored buttons, startup alerts, and Render Free limits.
 
 ### Forced subscription
 
@@ -403,7 +406,7 @@ Run with the project interpreter:
 Verified result in this workspace:
 
 ```text
-280 passed, 1 warning
+378 passed, 1 warning
 ```
 
 The single warning is a `StarletteDeprecationWarning` from FastAPI/Starlette suggesting `httpx2` for `TestClient`; it does not affect the application or test outcomes.
@@ -422,6 +425,9 @@ Coverage areas include:
 - welcome video fallback, texts, keyboards, navigation, `/start help`, `/cancel`, `/help`
 - webhook secret validation, body limits, dedupe, full-queue behaviour
 - runtime lifecycle, webhook registration, health state, ingestion
+- owner restart modes, Render deploy-hook success/failure, `restart_reason.txt` atomic writes and cleanup
+- owner command scopes and aliases, masked hosting email, global error replies and contextual logs
+- Render blueprint fields, dashboard-managed secrets, and example environment hygiene
 
 The suite does **not** prove live Telegram API compatibility, real channel membership behaviour, Render availability, or real-world PDF variety. Those require a deployed smoke test.
 

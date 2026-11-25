@@ -85,6 +85,48 @@ def create_bot(settings: Settings) -> Bot:
     )
 
 
+def _error_context(event: ErrorEvent) -> tuple[str, int | None, int | None]:
+    """Return the update kind and safe log identifiers for an error."""
+
+    update = event.update
+    if update.callback_query is not None:
+        query = update.callback_query
+        user_id = getattr(query.from_user, "id", None)
+        chat_id = query.message.chat.id if query.message is not None else None
+        return "callback_query", user_id, chat_id
+    if update.message is not None:
+        user_id = getattr(update.message.from_user, "id", None)
+        return "message", user_id, update.message.chat.id
+    return "other", None, None
+
+
+async def handle_error(event: ErrorEvent, bot: Bot) -> None:
+    """Reply safely to the user and log contextual, secret-free diagnostics."""
+
+    exception = event.exception
+    if isinstance(exception, KayiPdfError):
+        message = exception.user_message
+    else:
+        message = "Something went wrong. Please try again or use /cancel."
+    kind, user_id, chat_id = _error_context(event)
+    log.error(
+        "Unhandled %s update error (user=%s chat=%s): %s",
+        kind,
+        user_id,
+        chat_id,
+        type(exception).__name__,
+        exc_info=exception,
+    )
+    update = event.update
+    try:
+        if update.callback_query is not None:
+            await update.callback_query.answer(message[:190], show_alert=True)
+        elif update.message is not None:
+            await bot.send_message(update.message.chat.id, message)
+    except Exception:
+        pass
+
+
 def create_dispatcher(settings: Settings, services: AppServices) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.workflow_data.update(
@@ -121,25 +163,5 @@ def create_dispatcher(settings: Settings, services: AppServices) -> Dispatcher:
         fallback.router,
     )
 
-    async def on_error(event: ErrorEvent, bot: Bot) -> None:
-        exception = event.exception
-        if isinstance(exception, KayiPdfError):
-            message = exception.user_message
-        else:
-            message = "Something went wrong. Please try again or use /cancel."
-        log.error(
-            "Unhandled update error: %s",
-            type(exception).__name__,
-            exc_info=exception,
-        )
-        update = event.update
-        try:
-            if update.callback_query is not None:
-                await update.callback_query.answer(message[:190], show_alert=True)
-            elif update.message is not None:
-                await bot.send_message(update.message.chat.id, message)
-        except Exception:
-            pass
-
-    dp.errors.register(on_error)
+    dp.errors.register(handle_error)
     return dp

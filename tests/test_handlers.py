@@ -16,7 +16,11 @@ from app.handlers.fallback import stale_callback_fallback
 from app.handlers.merge import add_pdf_to_merge
 from app.handlers.menu import open_tool_callback
 from app.handlers.shared import DownloadedFile
-from app.handlers.start import start_handler, verify_subscription_handler
+from app.handlers.start import (
+    privacy_handler,
+    start_handler,
+    verify_subscription_handler,
+)
 from app.handlers.uploads import choose_operation, direct_upload
 from app.services.errors import FileValidationError
 from app.services.fsub import MembershipResult, MembershipStatus, PendingActionStore
@@ -29,6 +33,7 @@ from app.texts import (
     cancelled_text,
     fsub_text,
     fsub_verify_failed_text,
+    help_topic_text,
     no_active_task_text,
     verified_text,
 )
@@ -137,6 +142,14 @@ async def test_start_help_for_member_never_sends_video(
     assert message.answers[-1]["text"] == HELP_MAIN_TEXT
     assert bot.videos == []
     assert bot.messages == []
+
+
+@pytest.mark.asyncio
+async def test_privacy_command_reuses_the_limits_topic(settings) -> None:
+    message = FakeMessage(text="/privacy")
+    await privacy_handler(message, settings)
+    assert message.answers[-1]["text"] == help_topic_text("limits", settings)
+    assert message.answers[-1]["reply_markup"] is not None
 
 
 @pytest.mark.asyncio

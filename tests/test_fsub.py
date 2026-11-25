@@ -110,6 +110,18 @@ async def test_network_failure_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_membership_warning_includes_user_and_channel(caplog) -> None:
+    error = TelegramNetworkError(method=None, message="network down")
+    service = SubscriptionService("@KayiBots")
+    with caplog.at_level("WARNING", logger="app.services.fsub"):
+        result = await service.check(FakeBot(error=error), 42)
+    assert result.status is MembershipStatus.UNAVAILABLE
+    assert "FSUB_TG_ERROR" in caplog.text
+    assert "user_id=42" in caplog.text
+    assert "@KayiBots" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_unexpected_failure_fails_closed() -> None:
     service = SubscriptionService("@KayiBots")
     result = await service.check(FakeBot(error=RuntimeError("surprise")), 1)

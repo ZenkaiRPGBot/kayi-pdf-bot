@@ -23,6 +23,11 @@ log = get_logger(__name__)
 
 _COMMAND_RE = re.compile(r"^/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?$")
 
+# These commands are owner-only at the handler level.  The owner stays outside
+# the membership gate so telemetry and restart remain available when the
+# channel check itself is failing.  Non-owners still pass through the gate.
+_OWNER_COMMANDS = {"/usage", "/render", "/status", "/stats", "/restart"}
+
 
 def _command(event: TelegramObject) -> str:
     if not isinstance(event, Message) or not event.text:
@@ -33,9 +38,15 @@ def _command(event: TelegramObject) -> str:
     return first.split("@", 1)[0].lower()
 
 
-def is_exempt(event: TelegramObject) -> bool:
+def is_exempt(event: TelegramObject, owner_id: int | None = None) -> bool:
     if isinstance(event, Message):
-        return _command(event) in {"/start", "/cancel"}
+        command = _command(event)
+        if command in {"/start", "/cancel"}:
+            return True
+        if command in _OWNER_COMMANDS:
+            user = event.from_user
+            return bool(owner_id and user and user.id == owner_id)
+        return False
     if isinstance(event, CallbackQuery):
         return (event.data or "") == "fsub:verify"
     return False
@@ -53,7 +64,7 @@ class SubscriptionMiddleware(BaseMiddleware):
         self.settings = settings
 
     async def __call__(self, handler, event: TelegramObject, data: dict):
-        if is_exempt(event):
+        if is_exempt(event, self.settings.owner_id):
             return await handler(event, data)
         user = getattr(event, "from_user", None)
         if user is None:

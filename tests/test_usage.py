@@ -7,16 +7,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiogram.filters import Command, CommandObject
 from aiogram.types import BotCommandScopeChat, BotCommandScopeDefault
 
 from app.bot import build_services, create_dispatcher
 from app.config import ConfigError, Settings, load_settings
+from app.handlers import usage as usage_module
 from app.handlers.usage import (
     build_usage_card_text,
     is_owner,
+    mask_email,
     ping_handler,
     ping_refresh_callback,
     register_bot_commands,
+    restart_handler,
     usage_handler,
     usage_refresh_callback,
 )
@@ -41,6 +45,23 @@ def test_is_owner_fail_closed() -> None:
     # Zero owner_id must deny everyone rather than opening /usage publicly
     assert is_owner(986380678, _settings(owner_id=0)) is False
     assert is_owner(None, _settings(owner_id=986380678)) is False
+
+
+def test_mask_email_keeps_the_domain_but_hides_the_mailbox() -> None:
+    assert mask_email("owner@example.com") == "ow***@example.com"
+    assert mask_email("ab@example.com") == "a***@example.com"
+    assert mask_email("") == "Not Set"
+    assert mask_email("not-an-email") == "Not Set"
+
+
+def test_usage_aliases_are_registered() -> None:
+    commands: set[str] = set()
+    for handler in usage_module.router.message.handlers:
+        for filter_object in handler.filters:
+            callback = getattr(filter_object, "callback", None)
+            if isinstance(callback, Command):
+                commands.update(callback.commands)
+    assert {"usage", "render", "status", "stats", "restart"} <= commands
 
 
 def test_render_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,7 +142,8 @@ async def test_usage_handler_permissions_and_metrics(tmp_path) -> None:
     markup = owner_msg.answer.call_args[1]["reply_markup"]
 
     assert "Kayi PDF — Host &amp; Service Metrics" in text
-    assert "owner@example.com" in text
+    assert "ow***@example.com" in text
+    assert "owner@example.com" not in text
     assert "kayi-pdf-bot" in text
     assert "ZenkaiRPGBot/kayi-pdf-bot" in text
     assert "750h" in text
@@ -173,12 +195,20 @@ async def test_register_bot_commands_separates_public_and_owner() -> None:
 
     public_call, owner_call = bot.set_my_commands.call_args_list
     public_cmds = [c.command for c in public_call[0][0]]
-    assert public_cmds == ["start", "help", "ping", "cancel"]
+    assert public_cmds == ["start", "help", "privacy", "ping", "cancel"]
     assert "usage" not in public_cmds
     assert isinstance(public_call[1]["scope"], BotCommandScopeDefault)
 
     owner_cmds = [c.command for c in owner_call[0][0]]
-    assert owner_cmds == ["start", "help", "ping", "cancel", "usage"]
+    assert owner_cmds == [
+        "start",
+        "help",
+        "privacy",
+        "ping",
+        "cancel",
+        "usage",
+        "restart",
+    ]
     assert isinstance(owner_call[1]["scope"], BotCommandScopeChat)
     assert owner_call[1]["scope"].chat_id == 986380678
 
@@ -186,3 +216,168 @@ async def test_register_bot_commands_separates_public_and_owner() -> None:
     await register_bot_commands(bot, _settings(owner_id=0))
     assert bot.set_my_commands.call_count == 1
     assert isinstance(bot.set_my_commands.call_args[1]["scope"], BotCommandScopeDefault)
+
+
+@pytest.mark.asyncio
+async def test_restart_handler_is_owner_only(monkeypatch) -> None:
+    written: list[str] = []
+    scheduled: list[bool] = []
+    monkeypatch.setattr(
+        usage_module, "write_restart_reason", lambda reason: written.append(reason)
+    )
+    monkeypatch.setattr(
+        usage_module, "schedule_restart", lambda: scheduled.append(True) or True
+    )
+
+    message = MagicMock()
+    message.from_user = SimpleNamespace(id=111111111)
+    message.reply = AsyncMock()
+
+    await restart_handler(
+        message,
+        CommandObject(command="restart", args="maintenance"),
+        _settings(owner_id=986380678),
+    )
+
+    message.reply.assert_awaited_once_with("Access restricted to bot owner.")
+    assert written == []
+    assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_restart_handler_requires_a_configured_restart_path(monkeypatch) -> None:
+    monkeypatch.setattr(usage_module, "restart_mode", lambda: None)
+    written: list[str] = []
+    scheduled: list[bool] = []
+    monkeypatch.setattr(
+        usage_module, "write_restart_reason", lambda reason: written.append(reason)
+    )
+    monkeypatch.setattr(
+        usage_module, "schedule_restart", lambda: scheduled.append(True) or True
+    )
+
+    message = MagicMock()
+    message.from_user = SimpleNamespace(id=986380678)
+    message.reply = AsyncMock()
+
+    await restart_handler(
+        message,
+        CommandObject(command="restart", args="maintenance"),
+        _settings(owner_id=986380678),
+    )
+
+    text = message.reply.await_args.args[0]
+    assert "RENDER_DEPLOY_HOOK_URL" in text
+    assert "hosting dashboard" in text
+    assert written == []
+    assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_restart_handler_uses_the_render_deploy_hook(monkeypatch) -> None:
+    monkeypatch.setattr(usage_module, "restart_mode", lambda: usage_module.MODE_DEPLOY)
+    written: list[str] = []
+    cleared: list[bool] = []
+    scheduled: list[bool] = []
+
+    async def fake_trigger() -> bool:
+        return True
+
+    monkeypatch.setattr(usage_module, "trigger_deploy", fake_trigger)
+    monkeypatch.setattr(
+        usage_module, "write_restart_reason", lambda reason: written.append(reason)
+    )
+    monkeypatch.setattr(
+        usage_module, "clear_restart_reason", lambda: cleared.append(True)
+    )
+    monkeypatch.setattr(
+        usage_module, "schedule_restart", lambda: scheduled.append(True) or True
+    )
+
+    message = MagicMock()
+    message.from_user = SimpleNamespace(id=986380678)
+    message.reply = AsyncMock()
+
+    await restart_handler(
+        message,
+        CommandObject(command="restart", args="  planned\nmaintenance  "),
+        _settings(owner_id=986380678),
+    )
+
+    assert written == ["planned maintenance"]
+    assert cleared == []
+    assert scheduled == []
+    text = message.reply.await_args.args[0]
+    assert "Deploying a fresh Kayi PDF instance" in text
+    assert "planned maintenance" in text
+    assert "Render keeps this instance online" in text
+
+
+@pytest.mark.asyncio
+async def test_restart_handler_reports_a_rejected_deploy_hook(monkeypatch) -> None:
+    monkeypatch.setattr(usage_module, "restart_mode", lambda: usage_module.MODE_DEPLOY)
+    written: list[str] = []
+    cleared: list[bool] = []
+    scheduled: list[bool] = []
+
+    async def fake_trigger() -> bool:
+        return False
+
+    monkeypatch.setattr(usage_module, "trigger_deploy", fake_trigger)
+    monkeypatch.setattr(
+        usage_module, "write_restart_reason", lambda reason: written.append(reason)
+    )
+    monkeypatch.setattr(
+        usage_module, "clear_restart_reason", lambda: cleared.append(True)
+    )
+    monkeypatch.setattr(
+        usage_module, "schedule_restart", lambda: scheduled.append(True) or True
+    )
+
+    message = MagicMock()
+    message.from_user = SimpleNamespace(id=986380678)
+    message.reply = AsyncMock()
+
+    await restart_handler(
+        message,
+        CommandObject(command="restart", args="maintenance"),
+        _settings(owner_id=986380678),
+    )
+
+    text = message.reply.await_args.args[0]
+    assert "Restart was not started" in text
+    assert "RENDER_DEPLOY_HOOK_URL" in text
+    assert written == []
+    assert cleared == [True]
+    assert scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_restart_handler_writes_reason_then_schedules_local_shutdown(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(usage_module, "restart_mode", lambda: "shutdown")
+    written: list[str] = []
+    scheduled: list[bool] = []
+    monkeypatch.setattr(
+        usage_module, "write_restart_reason", lambda reason: written.append(reason)
+    )
+    monkeypatch.setattr(
+        usage_module, "schedule_restart", lambda: scheduled.append(True) or True
+    )
+
+    message = MagicMock()
+    message.from_user = SimpleNamespace(id=986380678)
+    message.reply = AsyncMock()
+
+    await restart_handler(
+        message,
+        CommandObject(command="restart", args="  planned\nmaintenance  "),
+        _settings(owner_id=986380678),
+    )
+
+    assert written == ["planned maintenance"]
+    assert scheduled == [True]
+    text = message.reply.await_args.args[0]
+    assert "Restarting Kayi PDF" in text
+    assert "planned maintenance" in text

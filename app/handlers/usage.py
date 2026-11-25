@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 
 from aiogram import Bot, F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import (
     BotCommand,
     BotCommandScopeChat,
@@ -21,6 +21,15 @@ from aiogram.types import (
 
 from app.config import BRAND_NAME, Settings
 from app.services.jobs import JobManager
+from app.services.restart import (
+    MODE_DEPLOY,
+    clear_restart_reason,
+    normalize_reason,
+    restart_mode,
+    schedule_restart,
+    trigger_deploy,
+    write_restart_reason,
+)
 from app.services.workspaces import WorkspaceManager
 from app.utils.logging import get_logger
 from app.utils.telegram import safe_answer_callback, safe_edit_text
@@ -47,6 +56,16 @@ _CPU_SAMPLE: tuple[float, float] = (_START_MONO, _cpu_seconds())
 def is_owner(user_id: int | None, settings: Settings) -> bool:
     """Fail-closed owner authorization check."""
     return bool(settings.owner_id and user_id and user_id == settings.owner_id)
+
+
+def mask_email(value: str) -> str:
+    """Keep the owner card useful without printing a full email address."""
+
+    if not value or "@" not in value:
+        return "Not Set"
+    local, domain = value.split("@", 1)
+    prefix = local[:1] if len(local) <= 2 else local[:2]
+    return f"{prefix}***@{domain}"
 
 
 def get_uptime_string(started_at: float | None = None) -> str:
@@ -196,7 +215,7 @@ async def build_usage_card_text(
     ping_display = f"{api_ms:.1f} ms" if api_ms is not None else "Unavailable"
 
     job_stats = jobs.stats
-    email_display = settings.render_email or "Not Set"
+    email_display = mask_email(settings.render_email)
 
     text = (
         f"<b>{escape(BRAND_NAME)} — Host &amp; Service Metrics</b>\n\n"
@@ -258,6 +277,8 @@ async def ping_refresh_callback(callback: CallbackQuery, bot: Bot) -> None:
 
 @router.message(Command("usage"))
 @router.message(Command("render"))
+@router.message(Command("status"))
+@router.message(Command("stats"))
 async def usage_handler(
     message: Message,
     bot: Bot,
@@ -271,6 +292,56 @@ async def usage_handler(
         return
     text, markup = await build_usage_card_text(bot, settings, jobs, workspaces)
     await message.answer(text, reply_markup=markup)
+
+
+@router.message(Command("restart"))
+async def restart_handler(
+    message: Message,
+    command: CommandObject,
+    settings: Settings,
+) -> None:
+    """Restart through a Render deploy hook or a graceful local shutdown."""
+
+    user_id = message.from_user.id if message.from_user else None
+    if not is_owner(user_id, settings):
+        await message.reply("Access restricted to bot owner.")
+        return
+
+    mode = restart_mode()
+    if mode is None:
+        await message.reply(
+            "Owner restart is not configured for this process. Set "
+            "<code>RENDER_DEPLOY_HOOK_URL</code> on Render, or use the hosting "
+            "dashboard to restart the service."
+        )
+        return
+
+    reason = normalize_reason(command.args)
+    if mode == MODE_DEPLOY:
+        if not await trigger_deploy():
+            clear_restart_reason()
+            await message.reply(
+                "❌ <b>Restart was not started.</b>\n\n"
+                "Render rejected the deploy hook or it is no longer valid. "
+                "Check <code>RENDER_DEPLOY_HOOK_URL</code> or use the dashboard."
+            )
+            return
+        write_restart_reason(reason)
+        await message.reply(
+            f"🔄 <b>Deploying a fresh {escape(BRAND_NAME)} instance…</b>\n\n"
+            f"<b>Reason:</b> <i>{escape(reason)}</i>\n\n"
+            "Render keeps this instance online until the new one passes its "
+            "health check, then swaps over automatically."
+        )
+        return
+
+    write_restart_reason(reason)
+    await message.reply(
+        f"🔄 <b>Restarting {escape(BRAND_NAME)}…</b>\n\n"
+        f"<b>Reason:</b> <i>{escape(reason)}</i>\n\n"
+        "The service will reconnect in a few seconds."
+    )
+    schedule_restart()
 
 
 @router.callback_query(F.data == "usage:refresh")
@@ -300,6 +371,7 @@ async def register_bot_commands(bot: Bot, settings: Settings) -> None:
     public_commands = [
         BotCommand(command="start", description="Start bot & PDF tools menu"),
         BotCommand(command="help", description="How to use PDF tools & limits"),
+        BotCommand(command="privacy", description="Privacy and data handling"),
         BotCommand(command="ping", description="Check bot latency and uptime"),
         BotCommand(command="cancel", description="Cancel the current PDF task"),
     ]
@@ -307,7 +379,11 @@ async def register_bot_commands(bot: Bot, settings: Settings) -> None:
         BotCommand(
             command="usage",
             description="Render hosting & service usage (Owner)",
-        )
+        ),
+        BotCommand(
+            command="restart",
+            description="Gracefully restart the service (Owner)",
+        ),
     ]
     try:
         await bot.set_my_commands(public_commands, scope=BotCommandScopeDefault())
@@ -324,8 +400,8 @@ async def register_bot_commands(bot: Bot, settings: Settings) -> None:
                     type(exc).__name__,
                 )
         log.info(
-            "Registered Telegram bot commands (/start, /help, /ping, /cancel%s)",
-            ", /usage" if settings.owner_id else "",
+            "Registered Telegram bot commands (/start, /help, /privacy, /ping, /cancel%s)",
+            ", /usage, /restart" if settings.owner_id else "",
         )
     except Exception as exc:
         log.warning("Could not register default bot commands: %s", type(exc).__name__)
