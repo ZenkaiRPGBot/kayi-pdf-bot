@@ -25,6 +25,7 @@ class RotateStates(StatesGroup):
 
 class ImagesStates(StatesGroup):
     collecting = State()
+    renaming = State()
 
 
 class UploadChoiceStates(StatesGroup):

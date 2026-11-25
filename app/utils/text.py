@@ -9,6 +9,9 @@ from pathlib import Path
 
 _UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE = re.compile(r"\s+")
+_PDF_SUFFIX = ".pdf"
+_PDF_STEM_LIMIT = 80
+_FALLBACK_PDF_NAME = "Images.pdf"
 
 
 def escape(value: str | None) -> str:
@@ -77,6 +80,50 @@ def filename_stem(name: str | None, default: str = "document") -> str:
     safe = sanitize_filename(name, f"{default}.pdf")
     stem = Path(safe).stem.strip(" .")
     return stem[:60] or default
+
+
+def parse_pdf_filename(name: str | None) -> str | None:
+    """Return a safe display name with exactly one ``.pdf`` suffix.
+
+    Path components are discarded, unsafe characters are removed, and the
+    result is bounded so it remains usable as a Telegram document name.  A
+    value that contains no usable stem returns ``None`` so callers can show a
+    validation message instead of silently inventing a name.
+    """
+
+    if not isinstance(name, str):
+        return None
+    candidate = name.strip()
+    if not candidate:
+        return None
+    candidate = candidate.replace("\\", "/").split("/")[-1]
+    candidate = _UNSAFE_FILENAME.sub("", candidate)
+    candidate = _WHITESPACE.sub(" ", candidate).strip()
+    if not candidate:
+        return None
+    stem = candidate
+    while stem.lower().endswith(_PDF_SUFFIX):
+        stem = stem[: -len(_PDF_SUFFIX)]
+        # ".pdf" alone (or repeated extensions) has no usable stem.
+        if not stem.strip(" ."):
+            return None
+    stem = stem.strip(" .")
+    stem = stem[:_PDF_STEM_LIMIT].strip(" .")
+    if not stem or stem in {".", ".."}:
+        return None
+    return f"{stem}{_PDF_SUFFIX}"
+
+
+def sanitize_pdf_filename(
+    name: str | None, default: str = _FALLBACK_PDF_NAME
+) -> str:
+    """Return a guaranteed-safe PDF display name."""
+
+    return (
+        parse_pdf_filename(name)
+        or parse_pdf_filename(default)
+        or _FALLBACK_PDF_NAME
+    )
 
 
 def output_pdf_name(source_name: str | None, suffix: str, default: str = "document") -> str:

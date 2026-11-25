@@ -33,6 +33,8 @@ from app.texts import (
     merge_result_text,
     merge_text,
     need_more_files_text,
+    rename_pdf_invalid_text,
+    rename_pdf_text,
     resend_after_verify_text,
     rotate_ready_text,
     rotate_result_text,
@@ -127,14 +129,41 @@ def test_merge_queue_keyboard_controls() -> None:
 def test_images_queue_keyboard_controls() -> None:
     rows = callback_rows(images_queue_keyboard(2))
     assert rows[0] == [("←", "images:prev"), ("1 / 2", "images:pos"), ("→", "images:next")]
-    assert rows[1] == [("↓ 1", "images:down:0"), ("✖ 1", "images:remove:0")]
-    assert rows[2] == [("↑ 2", "images:up:1"), ("✖ 2", "images:remove:1")]
-    assert rows[3] == [("✅ Convert to PDF", "images:go")]
-    assert rows[4] == [("← Main Menu", "menu:home")]
+    assert rows[1] == [("1", "images:select:0"), ("2", "images:select:1")]
+    assert rows[2] == [("↑ Move Up", "images:up"), ("↓ Move Down", "images:down")]
+    assert rows[3] == [("Remove Image", "images:remove")]
+    assert rows[4] == [("Rename PDF", "images:rename")]
+    assert rows[5] == [("Convert to PDF", "images:go")]
+    assert rows[6] == [("Cancel", "menu:home")]
 
     positioned = callback_rows(images_queue_keyboard(3, active_index=2))
     assert positioned[0] == [("←", "images:prev"), ("3 / 3", "images:pos"), ("→", "images:next")]
     assert callback_rows(images_queue_keyboard(0)) == [[("← Main Menu", "menu:home")]]
+
+
+def test_images_queue_keyboard_number_grid_sizes() -> None:
+    assert [len(row) for row in images_queue_keyboard(1).inline_keyboard[1:2]] == [1]
+    assert [
+        [button.text for button in row]
+        for row in images_queue_keyboard(5).inline_keyboard[1:2]
+    ] == [["1", "2", "3", "4", "5"]]
+    six = images_queue_keyboard(6)
+    assert [[button.text for button in row] for row in six.inline_keyboard[1:3]] == [
+        ["1", "2", "3", "4", "5"],
+        ["6"],
+    ]
+    ten = images_queue_keyboard(10, active_index=2)
+    assert [[button.text for button in row] for row in ten.inline_keyboard[1:3]] == [
+        ["1", "2", "3", "4", "5"],
+        ["6", "7", "8", "9", "10"],
+    ]
+    selected = [
+        button.text
+        for row in ten.inline_keyboard[1:3]
+        for button in row
+        if button.style == "primary"
+    ]
+    assert selected == ["3"]
 
 
 def test_images_queue_keyboard_native_styles() -> None:
@@ -144,9 +173,14 @@ def test_images_queue_keyboard_native_styles() -> None:
     assert preview[0]["style"] == "primary"
     assert "style" not in preview[1]
     assert preview[2]["style"] == "primary"
-    assert payload["inline_keyboard"][1][1]["style"] == "danger"
-    assert payload["inline_keyboard"][3][0]["style"] == "success"
+    assert payload["inline_keyboard"][1][0]["style"] == "primary"
+    assert "style" not in payload["inline_keyboard"][1][1]
+    assert "style" not in payload["inline_keyboard"][2][0]
+    assert "style" not in payload["inline_keyboard"][2][1]
+    assert payload["inline_keyboard"][3][0]["style"] == "danger"
     assert "style" not in payload["inline_keyboard"][4][0]
+    assert payload["inline_keyboard"][5][0]["style"] == "success"
+    assert "style" not in payload["inline_keyboard"][6][0]
 
 
 def test_rotate_keyboard_reflects_scope() -> None:
@@ -248,14 +282,26 @@ def test_images_copy() -> None:
         {"id": "first", "name": "a.jpg", "size": 2048},
         {"id": "second", "name": "b.png", "size": 1024},
     ]
-    text = images_text(items, settings)
+    text = images_text(items, settings, output_name="Custom.pdf")
     assert "a.jpg" in text and "2 KB" in text
     assert "b.png" in text
-    assert "Convert to PDF" in text
+    assert "Output:</b> <code>Custom.pdf</code>" in text
+    assert "move or remove" in text
     marked = images_text(items, settings, active_id="second")
     assert "▶ 2. b.png" in marked
     assert "▶ 1. a.jpg" not in marked
     assert len(images_text(items, settings, limit=100)) <= 101
+
+
+def test_rename_pdf_copy_escapes_dynamic_names() -> None:
+    text = rename_pdf_text("A & B.pdf")
+    assert "<b>Rename PDF</b>" in text
+    assert "<code>A &amp; B.pdf</code>" in text
+    assert ".pdf extension will be added automatically" in text
+    invalid = rename_pdf_invalid_text("<unsafe>.pdf")
+    assert "not valid" in invalid
+    assert "&lt;unsafe&gt;" in invalid
+    assert "tap Back" in invalid
 
 
 def test_result_and_error_copy() -> None:

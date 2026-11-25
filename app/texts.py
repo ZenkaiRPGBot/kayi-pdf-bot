@@ -52,8 +52,9 @@ HELP_TOPICS: dict[str, str] = {
         "<b>Images to PDF</b>\n\n"
         "Send 1–10 JPG or PNG images. Telegram photos are supported too.\n\n"
         "✦ Images keep the order shown\n"
-        "✦ Use ← → to preview, ↑ ↓ to reorder\n"
-        "✦ Reorder or remove images before converting\n"
+        "✦ Use ← → or the numbered buttons to preview\n"
+        "✦ Move or remove the selected image\n"
+        "✦ Rename the output PDF if you like\n"
         "✦ Transparent areas become white\n"
         "✦ Images are not enlarged"
     ),
@@ -116,8 +117,9 @@ def _images_help_text(settings: Settings) -> str:
         f"Send 1–{settings.max_images} JPG or PNG images. "
         "Telegram photos are supported too.\n\n"
         "✦ Images keep the order shown\n"
-        "✦ Use ← → to preview, ↑ ↓ to reorder\n"
-        "✦ Reorder or remove images before converting\n"
+        "✦ Use ← → or the numbered buttons to preview\n"
+        "✦ Move or remove the selected image\n"
+        "✦ Rename the output PDF if you like\n"
         "✦ Transparent areas become white\n"
         "✦ Images are not enlarged"
     )
@@ -281,8 +283,9 @@ def images_intro_text(settings: Settings) -> str:
         f"Send 1–{settings.max_images} JPG or PNG images. "
         "They will be added in the order received.\n\n"
         "✦ Use ← → to preview images\n"
-        "✦ Use ↑ ↓ to reorder\n"
-        "✦ Use ✖ to remove an image\n"
+        "✦ Use the numbered buttons to jump to an image\n"
+        "✦ Move or remove the selected image\n"
+        "✦ Rename the PDF if you like\n"
         "✦ Tap Convert to PDF when ready"
     )
 
@@ -292,6 +295,7 @@ def images_text(
     settings: Settings,
     *,
     active_id: str | None = None,
+    output_name: str | None = None,
     limit: int = 3800,
 ) -> str:
     if not items:
@@ -300,8 +304,10 @@ def images_text(
         "<b>Images to PDF</b>",
         "",
         f"<b>{len(items)}</b> of {settings.max_images} images ready.",
-        "",
     ]
+    if output_name:
+        lines.append(f"<b>Output:</b> <code>{escape(output_name)}</code>")
+    lines.append("")
     lines.extend(
         _file_line(
             index,
@@ -311,8 +317,33 @@ def images_text(
         )
         for index, item in enumerate(items, start=1)
     )
-    lines.extend(["", "Use the arrows to reorder, ✖ to remove, then tap Convert to PDF."])
+    lines.extend(
+        [
+            "",
+            "Use the arrows or numbers to preview, then move or remove the "
+            "selected image.",
+        ]
+    )
     return paginate_text(lines, limit=limit)
+
+
+def rename_pdf_text(current_name: str) -> str:
+    return (
+        "<b>Rename PDF</b>\n\n"
+        f"Current filename: <code>{escape(truncate(current_name, 84))}</code>\n\n"
+        "Send the new filename for your PDF.\n\n"
+        "<i>The .pdf extension will be added automatically.</i>"
+    )
+
+
+def rename_pdf_invalid_text(current_name: str) -> str:
+    return (
+        "<b>Rename PDF</b>\n\n"
+        "That filename is not valid. Use letters, numbers, spaces, or common "
+        "punctuation.\n\n"
+        f"Current filename: <code>{escape(truncate(current_name, 84))}</code>\n\n"
+        "Send another filename, or tap Back."
+    )
 
 
 def upload_choice_text(media_kind: str, name: str, page_count: int | None = None) -> str:

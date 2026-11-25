@@ -12,6 +12,7 @@ from aiohttp import ClientSession, ClientTimeout
 
 from app.bot import AppServices, build_services, create_bot, create_dispatcher
 from app.config import APP_NAME, APP_VERSION, Settings
+from app.services.restart_notify import build_restart_notifier
 from app.services.webhook import IngressStatus, UpdateIngress
 from app.utils.logging import get_logger
 
@@ -36,6 +37,7 @@ class TelegramRuntime:
         self.started_at = time.monotonic()
         self.ready = False
         self.webhook_registered = False
+        self.restart_notifier = build_restart_notifier(self.bot, settings)
         self._stopping = asyncio.Event()
         self._update_semaphore = asyncio.Semaphore(settings.max_concurrent_updates)
         self._update_tasks: set[asyncio.Task[Any]] = set()
@@ -55,6 +57,11 @@ class TelegramRuntime:
         self._background.append(
             asyncio.create_task(
                 self._workspace_cleanup_loop(), name="kayi-workspace-cleanup"
+            )
+        )
+        self._background.append(
+            asyncio.create_task(
+                self._notify_restart(), name="kayi-restart-notification"
             )
         )
         if self.settings.webhook_auto_set and self.settings.public_base_url:
@@ -161,6 +168,14 @@ class TelegramRuntime:
             )
         finally:
             self._update_semaphore.release()
+
+    async def _notify_restart(self) -> None:
+        try:
+            await self.restart_notifier.notify_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Restart notification task failed")
 
     async def _workspace_cleanup_loop(self) -> None:
         while not self._stopping.is_set():

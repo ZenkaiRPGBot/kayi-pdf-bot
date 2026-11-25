@@ -88,12 +88,13 @@ PDF bot/
 │  │  ├─ page_ranges.py      # Strict page/range parsing
 │  │  ├─ pdf_ops.py          # Validate, merge, split, extract, rotate
 │  │  ├─ previews.py         # Cached 720 px image previews for the workspace
+│  │  ├─ restart_notify.py   # Branded startup notification and duplicate suppression
 │  │  ├─ webhook.py          # Bounded ingress and update dedupe
 │  │  ├─ welcome.py          # Welcome video with safe text fallback
 │  │  └─ workspaces.py       # Isolated temp directories and cleanup
 │  ├─ states/workflows.py    # FSM states
 │  └─ utils/                 # Logging, Telegram UI helpers, text utilities
-├─ tests/                    # 18 test modules (config, handlers, ops, runtime, etc.)
+├─ tests/                    # Test modules for config, handlers, ops, runtime, etc.
 ├─ requirements.txt
 ├─ requirements-dev.txt
 ├─ render.yaml
@@ -263,6 +264,8 @@ PYTHON_VERSION=3.12.11
 
 Leave `PUBLIC_BASE_URL` unset so Render's `RENDER_EXTERNAL_URL` is used. `WEBHOOK_SECRET` is optional: if set, it may contain only letters, digits, `_`, and `-` (1–256 characters). Render's generated base64 value can contain `+` and `/` and will stop startup with `ConfigError`; if the variable is omitted, the app generates a valid URL-safe secret on each start.
 
+Optionally set `OWNER_ID` and/or `LOG_CHANNEL_ID` to receive the branded startup notification described under [Environment variables](#startup-notification).
+
 Add the bot as a channel administrator in Telegram. Without that, `getChatMember` can fail and protected actions stay blocked (fail closed).
 
 ### Optional Blueprint
@@ -297,6 +300,15 @@ The Render build succeeds, but the live Telegram smoke test is still pending.
 | `WEBHOOK_AUTO_SET` | `true` | Register the webhook at startup when a public URL exists. |
 | `DROP_PENDING_UPDATES` | `false` | Passed to `setWebhook`; drops queued Telegram updates on registration. |
 | `LOG_LEVEL` | `INFO` | Logging level. |
+
+### Startup notification
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OWNER_ID` | `0` (disabled) | Numeric Telegram user ID that receives the startup message. |
+| `LOG_CHANNEL_ID` | empty | Optional numeric channel ID or `@username` for a second copy. |
+
+When either recipient is set, startup sends one branded **Kayi PDF Online** message with the latest change bullets and the current IST time. Delivery is best-effort and never blocks the webhook runtime. A `restart_reason.txt` in the project root overrides the git commit subject for the next message and is deleted after use. The last notified commit is stored under `TEMP_ROOT` so an unchanged deployment is not announced again.
 
 ### Forced subscription
 

@@ -13,8 +13,10 @@ from app.utils.text import (
     format_pages,
     output_pdf_name,
     paginate_text,
+    parse_pdf_filename,
     safe_int,
     sanitize_filename,
+    sanitize_pdf_filename,
     truncate,
 )
 
@@ -82,6 +84,25 @@ def test_filename_stem_and_output_name() -> None:
     assert filename_stem("Report 2026.pdf") == "Report 2026"
     assert filename_stem(None, "merged") == "merged"
     assert output_pdf_name("Report.pdf", "rotated") == "Report_rotated.pdf"
+
+
+def test_parse_pdf_filename_normalises_and_keeps_unicode() -> None:
+    assert parse_pdf_filename("Report") == "Report.pdf"
+    assert parse_pdf_filename("Report.PDF") == "Report.pdf"
+    assert parse_pdf_filename("Report.pdf.pdf") == "Report.pdf"
+    assert parse_pdf_filename("  Résumé 2026  ") == "Résumé 2026.pdf"
+    assert parse_pdf_filename("a<b>c|d?.pdf") == "abcd.pdf"
+    assert parse_pdf_filename("../../etc/passwd") == "passwd.pdf"
+    assert parse_pdf_filename("..\\..\\windows\\system32\\cmd.exe") == "cmd.exe.pdf"
+    assert parse_pdf_filename("a" * 200) == "a" * 80 + ".pdf"
+
+
+def test_parse_pdf_filename_rejects_empty_or_invalid_names() -> None:
+    for raw in (None, "", "   ", ".pdf", "..", "/", "\\", "///", "\x00"):
+        assert parse_pdf_filename(raw) is None
+    assert sanitize_pdf_filename(None) == "Images.pdf"
+    assert sanitize_pdf_filename("", "Fallback") == "Fallback.pdf"
+    assert sanitize_pdf_filename("Valid") == "Valid.pdf"
 
 
 def test_paginate_text_respects_limit() -> None:

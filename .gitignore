@@ -9,3 +9,4 @@ htmlcov/
 temp/
 .tools/
 .local/
+restart_reason.txt

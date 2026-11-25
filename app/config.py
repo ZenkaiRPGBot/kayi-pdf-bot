@@ -17,6 +17,7 @@ from pathlib import Path
 
 APP_NAME = "kayi-pdf-bot"
 APP_VERSION = "1.0.0"
+BRAND_NAME = "Kayi PDF"
 
 _SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
 
@@ -92,6 +93,8 @@ class Settings:
     """Immutable runtime settings."""
 
     bot_token: str = field(default="", repr=False)
+    owner_id: int = 0
+    log_channel_id: str = ""
     public_base_url: str = ""
     webhook_secret: str = field(default="", repr=False)
     webhook_path: str = "/telegram/webhook"
@@ -162,6 +165,7 @@ class Settings:
             if not re.match(r"^https?://", self.fsub_invite_url):
                 raise ConfigError("FSUB_INVITE_URL must start with http:// or https://")
 
+        self._require_at_least("owner_id", self.owner_id, 0)
         self._require_at_least("max_file_size_mb", self.max_file_size_mb, 1)
         self._require_range("max_files_merge", self.max_files_merge, 2, 10)
         self._require_range("max_images", self.max_images, 1, 10)
@@ -274,6 +278,8 @@ def load_settings(*, require_token: bool = True) -> Settings:
 
     settings = Settings(
         bot_token=token,
+        owner_id=_env_int("OWNER_ID", 0, minimum=0),
+        log_channel_id=_env("LOG_CHANNEL_ID"),
         # Render injects RENDER_EXTERNAL_URL automatically.  Using it keeps
         # webhook registration working without a second manual URL.
         public_base_url=_normalise_base_url(

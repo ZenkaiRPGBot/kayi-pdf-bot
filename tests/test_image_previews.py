@@ -27,6 +27,8 @@ from app.handlers.images import (
     _process_images,
     add_image_to_images,
     images_control,
+    images_rename_back,
+    images_rename_text,
     render_images_queue,
 )
 from app.handlers.shared import DownloadedFile
@@ -300,6 +302,7 @@ async def set_images_state(
     preview_id: str | None,
     queue_message_id: int | None = None,
     queue_kind: str | None = None,
+    queue_item_id: str | None = None,
     preview_file_ids: dict[str, str] | None = None,
 ) -> dict:
     data = {
@@ -307,6 +310,7 @@ async def set_images_state(
         "files": files,
         "queue_message_id": queue_message_id,
         "queue_kind": queue_kind,
+        "queue_item_id": queue_item_id,
         "preview_id": preview_id,
         "preview_file_ids": preview_file_ids or {},
         "preview_unavailable": [],
@@ -511,6 +515,192 @@ async def test_position_button_is_informational_only(
 
 
 @pytest.mark.asyncio
+async def test_numbered_button_previews_that_queue_position(
+    settings: Settings, state: FSMContext, workspaces: WorkspaceManager, jobs: JobManager
+) -> None:
+    files = [
+        make_item("aaaaaaaaaaaa", name="a.jpg"),
+        make_item("bbbbbbbbbbbb", name="b.jpg"),
+        make_item("cccccccccccc", name="c.jpg"),
+    ]
+    await set_images_state(
+        state,
+        files,
+        preview_id="aaaaaaaaaaaa",
+        queue_message_id=10,
+        queue_kind="photo",
+        queue_item_id="aaaaaaaaaaaa",
+        preview_file_ids={
+            "aaaaaaaaaaaa": "file-a",
+            "bbbbbbbbbbbb": "file-b",
+            "cccccccccccc": "file-c",
+        },
+    )
+    bot = FakeBot()
+    callback = FakeCallback("images:select:2", message=FakeQueueMessage(10))
+    await images_control(callback, bot, state, settings, jobs, workspaces)
+    data = await state.get_data()
+    assert data["preview_id"] == "cccccccccccc"
+    assert data["files"] and [item["id"] for item in data["files"]] == [
+        "aaaaaaaaaaaa",
+        "bbbbbbbbbbbb",
+        "cccccccccccc",
+    ]
+    assert bot.edited_media[-1]["media"].media == "file-c"
+    assert "▶ 3. c.jpg" in bot.edited_media[-1]["media"].caption
+    assert button_texts(bot.edited_media[-1]["reply_markup"])[0] == [
+        "←",
+        "3 / 3",
+        "→",
+    ]
+    assert button_texts(bot.edited_media[-1]["reply_markup"])[1] == [
+        "1",
+        "2",
+        "3",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rename_flow_sets_custom_filename_without_media_upload(
+    monkeypatch,
+    settings: Settings,
+    state: FSMContext,
+    workspaces: WorkspaceManager,
+    jobs: JobManager,
+) -> None:
+    files = [
+        make_item("aaaaaaaaaaaa", name="first.jpg"),
+        make_item("bbbbbbbbbbbb", name="second.jpg"),
+    ]
+    await set_images_state(
+        state,
+        files,
+        preview_id="aaaaaaaaaaaa",
+        queue_message_id=10,
+        queue_kind="photo",
+        queue_item_id="aaaaaaaaaaaa",
+        preview_file_ids={"aaaaaaaaaaaa": "file-a", "bbbbbbbbbbbb": "file-b"},
+    )
+    bot = FakeBot()
+    callback = FakeCallback("images:rename", message=FakeQueueMessage(10))
+    await images_control(callback, bot, state, settings, jobs, workspaces)
+
+    data = await state.get_data()
+    prompt_id = data["rename_message_id"]
+    assert await state.get_state() == ImagesStates.renaming.state
+    assert bot.sent_messages[-1]["text"].startswith("<b>Rename PDF</b>")
+    assert "first_images.pdf" in bot.sent_messages[-1]["text"]
+    assert not bot.edited_media and not bot.sent_photos
+
+    message = FakeUserMessage()
+    message.text = "Quarterly Report.PDF"
+    await images_rename_text(message, bot, state, settings, workspaces)
+
+    data = await state.get_data()
+    assert await state.get_state() == ImagesStates.collecting.state
+    assert data["output_name"] == "Quarterly Report.pdf"
+    assert data["preview_id"] == "aaaaaaaaaaaa"
+    assert (100, prompt_id) in bot.deleted
+    assert not bot.edited_media and not bot.sent_photos
+    assert "Output:</b> <code>Quarterly Report.pdf</code>" in bot.edited_captions[-1][
+        "caption"
+    ]
+
+    captured: dict[str, object] = {}
+
+    def fake_images_to_pdf(paths, output, settings, token):
+        captured["paths"] = list(paths)
+        output.write_bytes(b"%PDF-1.4\n")
+
+    async def fake_deliver(bot, chat_id, path, filename, **kwargs):
+        captured["filename"] = filename
+        return FakeSent(999, chat_id=chat_id, text=filename)
+
+    monkeypatch.setattr(images_module, "images_to_pdf", fake_images_to_pdf)
+    monkeypatch.setattr(images_module, "deliver_document", fake_deliver)
+    await _process_images(callback, bot, state, data, settings, jobs, workspaces)
+
+    assert captured["filename"] == "Quarterly Report.pdf"
+    assert [Path(path).name for path in captured["paths"]] == [
+        "input_aaaaaaaaaaaa.jpg",
+        "input_bbbbbbbbbbbb.jpg",
+    ]
+    assert await state.get_state() is None
+    assert "output_name" not in await state.get_data()
+
+
+@pytest.mark.asyncio
+async def test_rename_back_leaves_existing_filename_unchanged(
+    settings: Settings, state: FSMContext, workspaces: WorkspaceManager, jobs: JobManager
+) -> None:
+    files = [make_item("aaaaaaaaaaaa", name="a.jpg")]
+    data = await set_images_state(
+        state,
+        files,
+        preview_id="aaaaaaaaaaaa",
+        queue_message_id=10,
+        queue_kind="photo",
+        queue_item_id="aaaaaaaaaaaa",
+        preview_file_ids={"aaaaaaaaaaaa": "file-a"},
+    )
+    data["output_name"] = "Existing.pdf"
+    await state.set_data(data)
+    bot = FakeBot()
+    await images_control(
+        FakeCallback("images:rename", message=FakeQueueMessage(10)),
+        bot,
+        state,
+        settings,
+        jobs,
+        workspaces,
+    )
+    data = await state.get_data()
+    prompt_id = data["rename_message_id"]
+    assert "Existing.pdf" in bot.sent_messages[-1]["text"]
+
+    await images_rename_back(
+        FakeCallback("images:rename:back", message=FakeQueueMessage(prompt_id)),
+        bot,
+        state,
+    )
+    data = await state.get_data()
+    assert await state.get_state() == ImagesStates.collecting.state
+    assert data["output_name"] == "Existing.pdf"
+    assert (100, prompt_id) in bot.deleted
+    assert not bot.edited_media and not bot.sent_photos
+
+
+@pytest.mark.asyncio
+async def test_invalid_rename_is_rejected_and_keeps_state(
+    settings: Settings, state: FSMContext, workspaces: WorkspaceManager
+) -> None:
+    files = [make_item("aaaaaaaaaaaa", name="a.jpg")]
+    data = await set_images_state(
+        state,
+        files,
+        preview_id="aaaaaaaaaaaa",
+        queue_message_id=10,
+        queue_kind="photo",
+        queue_item_id="aaaaaaaaaaaa",
+        preview_file_ids={"aaaaaaaaaaaa": "file-a"},
+    )
+    data["output_name"] = "Existing.pdf"
+    await state.set_data(data)
+    await state.set_state(ImagesStates.renaming)
+    bot = FakeBot()
+
+    for invalid in ("", "   ", ".pdf", "///", ".."):
+        message = FakeUserMessage()
+        message.text = invalid
+        await images_rename_text(message, bot, state, settings, workspaces)
+        assert await state.get_state() == ImagesStates.renaming.state
+        assert (await state.get_data())["output_name"] == "Existing.pdf"
+        assert message.answers
+        assert message.answers[-1]["text"].startswith("<b>Rename PDF</b>")
+    assert not bot.edited_media and not bot.sent_photos
+
+
+@pytest.mark.asyncio
 async def test_identical_filenames_remain_distinguishable_by_id(
     settings: Settings, state: FSMContext, workspaces: WorkspaceManager
 ) -> None:
@@ -565,6 +755,7 @@ async def test_uploading_another_image_preserves_current_preview(
     bot = FakeBot()
     await render_images_queue(bot, 100, state, data, settings, workspaces)
     assert bot.edited_media
+    media_edits = len(bot.edited_media)
 
     downloaded = DownloadedFile(
         path=second,
@@ -584,12 +775,14 @@ async def test_uploading_another_image_preserves_current_preview(
     data = await state.get_data()
     assert len(data["files"]) == 2
     assert data["preview_id"] == "aaaaaaaaaaaa"
-    assert button_texts(bot.edited_media[-1]["reply_markup"])[0] == [
+    assert len(bot.edited_media) == media_edits
+    assert bot.edited_captions
+    assert button_texts(bot.edited_captions[-1]["reply_markup"])[0] == [
         "←",
         "1 / 2",
         "→",
     ]
-    assert "▶ 1. first.jpg" in bot.edited_media[-1]["media"].caption
+    assert "▶ 1. first.jpg" in bot.edited_captions[-1]["caption"]
     assert not bot.sent_photos
 
 
@@ -608,6 +801,7 @@ async def test_reordering_previewed_image_keeps_selection(
         preview_id="bbbbbbbbbbbb",
         queue_message_id=10,
         queue_kind="photo",
+        queue_item_id="bbbbbbbbbbbb",
         preview_file_ids={
             "aaaaaaaaaaaa": "file-a",
             "bbbbbbbbbbbb": "file-b",
@@ -616,7 +810,7 @@ async def test_reordering_previewed_image_keeps_selection(
     )
     bot = FakeBot()
     await images_control(
-        FakeCallback("images:up:1", message=FakeQueueMessage(10)),
+        FakeCallback("images:up", message=FakeQueueMessage(10)),
         bot,
         state,
         settings,
@@ -630,9 +824,12 @@ async def test_reordering_previewed_image_keeps_selection(
         "cccccccccccc",
     ]
     assert data["preview_id"] == "bbbbbbbbbbbb"
-    assert bot.edited_media[-1]["media"].media == "file-b"
-    assert "▶ 1. b.jpg" in bot.edited_media[-1]["media"].caption
-    assert button_texts(bot.edited_media[-1]["reply_markup"])[0] == [
+    assert data["preview_file_ids"]["bbbbbbbbbbbb"] == "file-b"
+    assert not bot.edited_media
+    assert not bot.sent_photos
+    assert bot.edited_captions
+    assert "▶ 1. b.jpg" in bot.edited_captions[-1]["caption"]
+    assert button_texts(bot.edited_captions[-1]["reply_markup"])[0] == [
         "←",
         "1 / 3",
         "→",
@@ -640,7 +837,7 @@ async def test_reordering_previewed_image_keeps_selection(
 
 
 @pytest.mark.asyncio
-async def test_reordering_other_images_preserves_selection(
+async def test_moving_selected_image_updates_position_and_reuses_media(
     settings: Settings, state: FSMContext, workspaces: WorkspaceManager, jobs: JobManager
 ) -> None:
     files = [
@@ -654,6 +851,7 @@ async def test_reordering_other_images_preserves_selection(
         preview_id="aaaaaaaaaaaa",
         queue_message_id=10,
         queue_kind="photo",
+        queue_item_id="aaaaaaaaaaaa",
         preview_file_ids={
             "aaaaaaaaaaaa": "file-a",
             "bbbbbbbbbbbb": "file-b",
@@ -662,7 +860,30 @@ async def test_reordering_other_images_preserves_selection(
     )
     bot = FakeBot()
     await images_control(
-        FakeCallback("images:up:2", message=FakeQueueMessage(10)),
+        FakeCallback("images:down", message=FakeQueueMessage(10)),
+        bot,
+        state,
+        settings,
+        jobs,
+        workspaces,
+    )
+    data = await state.get_data()
+    assert [item["id"] for item in data["files"]] == [
+        "bbbbbbbbbbbb",
+        "aaaaaaaaaaaa",
+        "cccccccccccc",
+    ]
+    assert data["preview_id"] == "aaaaaaaaaaaa"
+    assert not bot.edited_media and not bot.sent_photos
+    assert "▶ 2. a.jpg" in bot.edited_captions[-1]["caption"]
+    assert button_texts(bot.edited_captions[-1]["reply_markup"])[0] == [
+        "←",
+        "2 / 3",
+        "→",
+    ]
+
+    await images_control(
+        FakeCallback("images:up", message=FakeQueueMessage(10)),
         bot,
         state,
         settings,
@@ -672,12 +893,55 @@ async def test_reordering_other_images_preserves_selection(
     data = await state.get_data()
     assert [item["id"] for item in data["files"]] == [
         "aaaaaaaaaaaa",
-        "cccccccccccc",
         "bbbbbbbbbbbb",
+        "cccccccccccc",
     ]
     assert data["preview_id"] == "aaaaaaaaaaaa"
-    assert bot.edited_media[-1]["media"].media == "file-a"
-    assert "▶ 1. a.jpg" in bot.edited_media[-1]["media"].caption
+    assert not bot.edited_media and not bot.sent_photos
+    assert "▶ 1. a.jpg" in bot.edited_captions[-1]["caption"]
+
+
+@pytest.mark.asyncio
+async def test_move_boundaries_acknowledge_without_editing(
+    settings: Settings, state: FSMContext, workspaces: WorkspaceManager, jobs: JobManager
+) -> None:
+    files = [
+        make_item("aaaaaaaaaaaa", name="a.jpg"),
+        make_item("bbbbbbbbbbbb", name="b.jpg"),
+        make_item("cccccccccccc", name="c.jpg"),
+    ]
+    await set_images_state(
+        state,
+        files,
+        preview_id="aaaaaaaaaaaa",
+        queue_message_id=10,
+        queue_kind="photo",
+        queue_item_id="aaaaaaaaaaaa",
+        preview_file_ids={
+            "aaaaaaaaaaaa": "file-a",
+            "bbbbbbbbbbbb": "file-b",
+            "cccccccccccc": "file-c",
+        },
+    )
+    bot = FakeBot()
+    first = FakeCallback("images:up", message=FakeQueueMessage(10))
+    await images_control(first, bot, state, settings, jobs, workspaces)
+    assert first.answers == [{"text": None, "show_alert": False}]
+    assert not bot.edited_media and not bot.edited_captions and not bot.sent_photos
+
+    data = await state.get_data()
+    data["preview_id"] = "cccccccccccc"
+    data["queue_item_id"] = "cccccccccccc"
+    await state.set_data(data)
+    last = FakeCallback("images:down", message=FakeQueueMessage(10))
+    await images_control(last, bot, state, settings, jobs, workspaces)
+    assert last.answers == [{"text": None, "show_alert": False}]
+    assert not bot.edited_media and not bot.edited_captions and not bot.sent_photos
+    assert [item["id"] for item in (await state.get_data())["files"]] == [
+        "aaaaaaaaaaaa",
+        "bbbbbbbbbbbb",
+        "cccccccccccc",
+    ]
 
 
 @pytest.mark.asyncio
@@ -695,6 +959,7 @@ async def test_removing_previewed_image_selects_next_then_previous(
         preview_id="bbbbbbbbbbbb",
         queue_message_id=10,
         queue_kind="photo",
+        queue_item_id="bbbbbbbbbbbb",
         preview_file_ids={
             "aaaaaaaaaaaa": "file-a",
             "bbbbbbbbbbbb": "file-b",
@@ -703,7 +968,7 @@ async def test_removing_previewed_image_selects_next_then_previous(
     )
     bot = FakeBot()
     await images_control(
-        FakeCallback("images:remove:1", message=FakeQueueMessage(10)),
+        FakeCallback("images:remove", message=FakeQueueMessage(10)),
         bot,
         state,
         settings,
@@ -716,7 +981,7 @@ async def test_removing_previewed_image_selects_next_then_previous(
     assert "▶ 2. c.jpg" in bot.edited_media[-1]["media"].caption
 
     await images_control(
-        FakeCallback("images:remove:1", message=FakeQueueMessage(10)),
+        FakeCallback("images:remove", message=FakeQueueMessage(10)),
         bot,
         state,
         settings,
@@ -730,7 +995,7 @@ async def test_removing_previewed_image_selects_next_then_previous(
 
 
 @pytest.mark.asyncio
-async def test_removing_other_image_preserves_selection(
+async def test_removing_selected_last_image_selects_previous(
     settings: Settings, state: FSMContext, workspaces: WorkspaceManager, jobs: JobManager
 ) -> None:
     files = [
@@ -741,9 +1006,10 @@ async def test_removing_other_image_preserves_selection(
     await set_images_state(
         state,
         files,
-        preview_id="aaaaaaaaaaaa",
+        preview_id="cccccccccccc",
         queue_message_id=10,
         queue_kind="photo",
+        queue_item_id="cccccccccccc",
         preview_file_ids={
             "aaaaaaaaaaaa": "file-a",
             "bbbbbbbbbbbb": "file-b",
@@ -752,7 +1018,7 @@ async def test_removing_other_image_preserves_selection(
     )
     bot = FakeBot()
     await images_control(
-        FakeCallback("images:remove:2", message=FakeQueueMessage(10)),
+        FakeCallback("images:remove", message=FakeQueueMessage(10)),
         bot,
         state,
         settings,
@@ -761,8 +1027,8 @@ async def test_removing_other_image_preserves_selection(
     )
     data = await state.get_data()
     assert [item["id"] for item in data["files"]] == ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]
-    assert data["preview_id"] == "aaaaaaaaaaaa"
-    assert "▶ 1. a.jpg" in bot.edited_media[-1]["media"].caption
+    assert data["preview_id"] == "bbbbbbbbbbbb"
+    assert "▶ 2. b.jpg" in bot.edited_media[-1]["media"].caption
 
 
 @pytest.mark.asyncio
@@ -787,7 +1053,7 @@ async def test_removing_final_image_restores_empty_text_workspace(
         preview_file_ids={"aaaaaaaaaaaa": "file-a"},
     )
     bot = FakeBot()
-    callback = FakeCallback("images:remove:0", message=FakeQueueMessage(10))
+    callback = FakeCallback("images:remove", message=FakeQueueMessage(10))
     await images_control(callback, bot, state, settings, jobs, workspaces)
 
     data = await state.get_data()

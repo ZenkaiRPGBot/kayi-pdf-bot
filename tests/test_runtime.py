@@ -111,6 +111,35 @@ async def test_runtime_starts_processes_and_stops(monkeypatch, tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_runtime_start_survives_restart_notification_failure(
+    monkeypatch, tmp_path
+) -> None:
+    settings = Settings(
+        bot_token="123:test",
+        webhook_secret="secret",
+        temp_root=tmp_path / "runtime",
+        webhook_auto_set=False,
+    )
+
+    class FailingNotifier:
+        async def notify_once(self):
+            raise RuntimeError("notification failed")
+
+    monkeypatch.setattr(
+        "app.runtime.build_restart_notifier",
+        lambda bot, value: FailingNotifier(),
+    )
+    runtime, _, _ = make_runtime(monkeypatch, settings)
+    await runtime.start()
+    try:
+        await asyncio.sleep(0.05)
+        assert runtime.health()["status"] == "ok"
+        assert runtime.ready is True
+    finally:
+        await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_runtime_registers_webhook(monkeypatch, tmp_path) -> None:
     settings = Settings(
         bot_token="123:test",

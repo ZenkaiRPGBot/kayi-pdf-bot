@@ -26,7 +26,11 @@ from app.handlers.shared import (
     remove_item,
     total_size,
 )
-from app.keyboards.main import back_to_menu_keyboard, images_queue_keyboard
+from app.keyboards.main import (
+    back_to_menu_keyboard,
+    images_queue_keyboard,
+    rename_pdf_keyboard,
+)
 from app.services.errors import (
     JobAlreadyActiveError,
     JobCancelled,
@@ -51,11 +55,13 @@ from app.texts import (
     images_result_text,
     images_text,
     need_more_files_text,
+    rename_pdf_invalid_text,
+    rename_pdf_text,
     status_text,
 )
 from app.utils.logging import get_logger
 from app.utils.telegram import safe_delete, safe_edit_text
-from app.utils.text import filename_stem
+from app.utils.text import filename_stem, parse_pdf_filename, sanitize_pdf_filename
 
 log = get_logger(__name__)
 router = Router(name="images")
@@ -74,6 +80,21 @@ def _item_id(item: dict) -> str:
         value = new_item_id()
         item["id"] = value
     return value
+
+
+def _default_output_name(files: list[dict]) -> str:
+    stem = filename_stem(files[0].get("name"), "images") if files else "images"
+    return sanitize_pdf_filename(f"{stem}_images.pdf")
+
+
+def _output_name(data: dict) -> str:
+    custom = data.get("output_name")
+    if isinstance(custom, str) and custom:
+        safe = parse_pdf_filename(custom)
+        if safe is not None:
+            return safe
+    files = data.get("files")
+    return _default_output_name(files if isinstance(files, list) else [])
 
 
 def _preview_index(files: list[dict], preview_id: str | None) -> int | None:
@@ -120,6 +141,18 @@ def _normalise_preview(data: dict) -> tuple[list[dict], int | None]:
     data["preview_unavailable"] = [
         value for value in unavailable if isinstance(value, str) and value in ids
     ]
+    queue_item_id = data.get("queue_item_id")
+    if not isinstance(queue_item_id, str) or queue_item_id not in ids:
+        data["queue_item_id"] = None
+    output_name = data.get("output_name")
+    if output_name is not None:
+        safe_name = (
+            parse_pdf_filename(output_name) if isinstance(output_name, str) else None
+        )
+        if safe_name is None:
+            data.pop("output_name", None)
+        else:
+            data["output_name"] = safe_name
     return files, index
 
 
@@ -219,6 +252,33 @@ async def _render_photo_queue(
     message_id = data.get("queue_message_id")
     kind = data.get("queue_kind")
 
+    # The selected image has not changed (for example after reordering or
+    # renaming): update only the caption and keyboard.  This avoids touching
+    # the media and any Telegram upload path.
+    if message_id and kind == "photo" and data.get("queue_item_id") == item_id:
+        try:
+            await bot.edit_message_caption(
+                chat_id=chat_id,
+                message_id=int(message_id),
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=markup,
+            )
+        except TelegramRetryAfter as exc:
+            log.warning(
+                "Telegram flood control while editing a preview caption; retry in %ss",
+                exc.retry_after,
+            )
+            return
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+            log.debug("Could not edit preview caption: %s", type(exc).__name__)
+        except TelegramAPIError as exc:
+            log.debug("Could not edit preview caption: %s", type(exc).__name__)
+        else:
+            return
+
     for attempt in range(2):
         if message_id and kind == "photo":
             try:
@@ -246,6 +306,7 @@ async def _render_photo_queue(
                 log.debug("Could not edit image preview: %s", type(exc).__name__)
             else:
                 _cache_preview_file_id(data, item_id, sent)
+                data["queue_item_id"] = item_id
                 return
 
         try:
@@ -293,6 +354,7 @@ async def _render_photo_queue(
         _cache_preview_file_id(data, item_id, sent)
         data["queue_message_id"] = sent.message_id
         data["queue_kind"] = "photo"
+        data["queue_item_id"] = item_id
         if old_message_id and int(old_message_id) != int(sent.message_id):
             await _delete_message(bot, chat_id, old_message_id)
         return
@@ -346,6 +408,7 @@ async def _render_text_queue(
     old_message_id = message_id
     data["queue_message_id"] = sent.message_id
     data["queue_kind"] = "text"
+    data["queue_item_id"] = None
     if old_message_id and int(old_message_id) != int(sent.message_id):
         await _delete_message(bot, chat_id, old_message_id)
 
@@ -362,7 +425,10 @@ async def render_images_queue(
 
     files, active_index = _normalise_preview(data)
     active_id = data.get("preview_id")
-    text = images_text(files, settings, active_id=active_id)
+    output_name = _output_name(data)
+    text = images_text(
+        files, settings, active_id=active_id, output_name=output_name
+    )
     markup = images_queue_keyboard(len(files), active_index=active_index)
 
     media: str | FSInputFile | None = None
@@ -389,6 +455,7 @@ async def render_images_queue(
             files,
             settings,
             active_id=active_id,
+            output_name=output_name,
             limit=1000,
         )
         await _render_photo_queue(
@@ -611,80 +678,9 @@ async def images_control(
         return
     parts = (callback.data or "").split(":")
     action = parts[1] if len(parts) > 1 else ""
+    files, current = _normalise_preview(data)
 
-    if action in {"up", "down", "remove"}:
-        try:
-            index = int(parts[2])
-        except (ValueError, IndexError):
-            await callback.answer(expired_text(), show_alert=True)
-            return
-        files = data["files"]
-        if not 0 <= index < len(files):
-            await callback.answer(expired_text(), show_alert=True)
-            return
-        await callback.answer()
-        changed = False
-        if action == "remove":
-            workspace = await workspaces.get_or_create(user.id)
-            removed = files[index]
-            removed_id = _item_id(removed)
-            await remove_item(workspace, files, index)
-            _drop_preview_assets(workspace, data, removed_id)
-            if data.get("preview_id") == removed_id:
-                if index < len(files):
-                    data["preview_id"] = _item_id(files[index])
-                elif files:
-                    data["preview_id"] = _item_id(files[index - 1])
-                else:
-                    data["preview_id"] = None
-            changed = True
-        elif action == "up" and index > 0:
-            files[index - 1], files[index] = files[index], files[index - 1]
-            changed = True
-        elif action == "down" and index < len(files) - 1:
-            files[index], files[index + 1] = files[index + 1], files[index]
-            changed = True
-        data["files"] = files
-        await state.set_data(data)
-        if changed and callback.message is not None:
-            await render_images_queue(
-                bot,
-                callback.message.chat.id,
-                state,
-                data,
-                settings,
-                workspaces,
-            )
-        return
-
-    if action in {"prev", "next"}:
-        files = data["files"]
-        if not files:
-            await callback.answer(expired_text(), show_alert=True)
-            return
-        current = _preview_index(files, data.get("preview_id"))
-        if current is None:
-            data["preview_id"] = _item_id(files[0])
-            await state.set_data(data)
-            await callback.answer()
-            if callback.message is not None:
-                await render_images_queue(
-                    bot,
-                    callback.message.chat.id,
-                    state,
-                    data,
-                    settings,
-                    workspaces,
-                )
-            return
-        target = current - 1 if action == "prev" else current + 1
-        if not 0 <= target < len(files):
-            # Boundary: acknowledge without editing the workspace message.
-            await callback.answer()
-            return
-        data["preview_id"] = _item_id(files[target])
-        await state.set_data(data)
-        await callback.answer()
+    async def rerender() -> None:
         if callback.message is not None:
             await render_images_queue(
                 bot,
@@ -694,19 +690,101 @@ async def images_control(
                 settings,
                 workspaces,
             )
+
+    if action in {"prev", "next"}:
+        if not files or current is None:
+            await callback.answer(expired_text(), show_alert=True)
+            return
+        target = current - 1 if action == "prev" else current + 1
+        if not 0 <= target < len(files):
+            # Boundary: acknowledge without editing the workspace message.
+            await callback.answer()
+            return
+        data["preview_id"] = _item_id(files[target])
+        await state.set_data(data)
+        await callback.answer()
+        await rerender()
+        return
+
+    if action == "select":
+        try:
+            target = int(parts[2])
+        except (ValueError, IndexError):
+            await callback.answer(expired_text(), show_alert=True)
+            return
+        if not files or not 0 <= target < len(files):
+            await callback.answer(expired_text(), show_alert=True)
+            return
+        if target == current:
+            await callback.answer()
+            return
+        data["preview_id"] = _item_id(files[target])
+        await state.set_data(data)
+        await callback.answer()
+        await rerender()
+        return
+
+    if action in {"up", "down"}:
+        if not files or current is None:
+            await callback.answer(expired_text(), show_alert=True)
+            return
+        target = current - 1 if action == "up" else current + 1
+        if not 0 <= target < len(files):
+            # Boundary: acknowledge without changing the queue.
+            await callback.answer()
+            return
+        files[current], files[target] = files[target], files[current]
+        data["files"] = files
+        await state.set_data(data)
+        await callback.answer()
+        await rerender()
+        return
+
+    if action == "remove":
+        if not files or current is None:
+            await callback.answer(expired_text(), show_alert=True)
+            return
+        workspace = await workspaces.get_or_create(user.id)
+        removed = files[current]
+        removed_id = _item_id(removed)
+        await remove_item(workspace, files, current)
+        _drop_preview_assets(workspace, data, removed_id)
+        if files:
+            data["preview_id"] = _item_id(
+                files[current] if current < len(files) else files[current - 1]
+            )
+        else:
+            data["preview_id"] = None
+            data.pop("output_name", None)
+        data["files"] = files
+        await state.set_data(data)
+        await callback.answer()
+        await rerender()
         return
 
     if action == "pos":
-        files = data["files"]
-        current = _preview_index(files, data.get("preview_id"))
         if not files or current is None:
             await callback.answer(expired_text(), show_alert=True)
             return
         await callback.answer(f"{current + 1} / {len(files)}")
         return
 
+    if action == "rename":
+        if not files:
+            await callback.answer(need_more_files_text(1), show_alert=True)
+            return
+        await callback.answer()
+        await state.set_state(ImagesStates.renaming)
+        sent = await bot.send_message(
+            callback.message.chat.id if callback.message else user.id,
+            rename_pdf_text(_output_name(data)),
+            reply_markup=rename_pdf_keyboard(),
+        )
+        await state.update_data(rename_message_id=sent.message_id)
+        return
+
     if action == "go":
-        if not data["files"]:
+        if not files:
             await callback.answer(need_more_files_text(1), show_alert=True)
             return
         await callback.answer()
@@ -714,6 +792,83 @@ async def images_control(
         return
 
     await callback.answer(expired_text(), show_alert=True)
+
+
+@router.callback_query(ImagesStates.renaming, F.data == "images:rename:back")
+async def images_rename_back(
+    callback: CallbackQuery,
+    bot: Bot,
+    state: FSMContext,
+) -> None:
+    user = callback.from_user
+    if user is None:
+        return
+    data = await _state_data(state, user.id)
+    if data is None:
+        await callback.answer(expired_text(), show_alert=True)
+        return
+    await callback.answer()
+    prompt_id = data.pop("rename_message_id", None)
+    await state.set_state(ImagesStates.collecting)
+    await state.set_data(data)
+    if isinstance(prompt_id, int):
+        chat_id = callback.message.chat.id if callback.message else user.id
+        await _delete_message(bot, chat_id, prompt_id)
+
+
+@router.message(ImagesStates.renaming, F.text & ~F.text.startswith("/"))
+async def images_rename_text(
+    message: Message,
+    bot: Bot,
+    state: FSMContext,
+    settings: Settings,
+    workspaces: WorkspaceManager,
+) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    data = await _state_data(state, user.id)
+    if data is None:
+        await message.answer(expired_text(), reply_markup=back_to_menu_keyboard())
+        await workspaces.cleanup_user(user.id)
+        return
+    filename = parse_pdf_filename(message.text)
+    if filename is None:
+        await message.answer(
+            rename_pdf_invalid_text(_output_name(data)),
+            reply_markup=rename_pdf_keyboard(),
+        )
+        return
+    data["output_name"] = filename
+    prompt_id = data.pop("rename_message_id", None)
+    await state.set_state(ImagesStates.collecting)
+    await state.set_data(data)
+    if isinstance(prompt_id, int):
+        await _delete_message(bot, message.chat.id, prompt_id)
+    await render_images_queue(
+        bot,
+        message.chat.id,
+        state,
+        data,
+        settings,
+        workspaces,
+    )
+
+
+@router.message(ImagesStates.renaming, F.document | F.photo)
+async def images_rename_media_hint(message: Message) -> None:
+    await message.answer(
+        "Send a filename for the PDF, or tap Back to return to the images.",
+        reply_markup=rename_pdf_keyboard(),
+    )
+
+
+@router.message(ImagesStates.renaming)
+async def images_rename_hint(message: Message) -> None:
+    await message.answer(
+        "Send a filename for the PDF, or tap Back to return to the images.",
+        reply_markup=rename_pdf_keyboard(),
+    )
 
 
 async def _process_images(
@@ -740,8 +895,8 @@ async def _process_images(
         slot = await jobs.acquire(user.id)
         workspace = await workspaces.get_or_create(user.id)
         paths = [item_path(workspace, item) for item in files]
-        stem = filename_stem(files[0].get("name"), "images")
-        output = await workspace.new_output_path(f"{stem}_images.pdf")
+        display_name = _output_name(data)
+        output = await workspace.new_output_path("output.pdf")
         await run_cpu(
             images_to_pdf,
             paths,
@@ -756,7 +911,7 @@ async def _process_images(
             bot,
             chat_id,
             output,
-            output.name,
+            display_name,
             caption=images_result_text(len(files)),
             settings=settings,
             reply_markup=back_to_menu_keyboard(),
