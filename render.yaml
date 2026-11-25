@@ -11,6 +11,10 @@ services:
         value: 3.12.11
       - key: BOT_TOKEN
         sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: LOG_CHANNEL_ID
+        sync: false
       # Do not set WEBHOOK_SECRET here.  Render's generated base64 value can
       # contain + and /, which the app rejects at startup.  Without the
       # variable it generates a valid URL-safe secret on every start.
