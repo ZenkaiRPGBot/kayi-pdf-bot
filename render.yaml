@@ -52,4 +52,4 @@ services:
       - key: SELF_PING_INITIAL_DELAY
         value: "60"
       - key: SELF_PING_INTERVAL
-        value: "840"
+        value: "600"
