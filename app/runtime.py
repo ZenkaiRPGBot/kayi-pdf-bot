@@ -79,12 +79,20 @@ class TelegramRuntime:
         elif self.settings.webhook_auto_set:
             log.warning("PUBLIC_BASE_URL is not set; Telegram webhook was not registered")
         if self.settings.enable_self_ping:
-            if self.settings.ping_url:
+            ping_url = self.settings.ping_url
+            if not ping_url:
+                render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+                if render_url:
+                    ping_url = render_url.rstrip("/") + "/ping"
+                    log.info("PING_URL was empty; using RENDER_EXTERNAL_URL fallback")
+            if ping_url:
+                self.settings = self.settings.with_ping_url(ping_url) if hasattr(self.settings, "with_ping_url") else self.settings
+                self._ping_url = ping_url
                 self._background.append(
                     asyncio.create_task(self._self_ping_loop(), name="kayi-self-ping")
                 )
             else:
-                log.warning("ENABLE_SELF_PING is true but PING_URL is empty")
+                log.warning("ENABLE_SELF_PING is true but PING_URL and RENDER_EXTERNAL_URL are empty")
         log.info(
             "Kayi PDF Bot runtime started (queue=%d, active_jobs=%d)",
             self.ingress.capacity,
@@ -247,10 +255,11 @@ class TelegramRuntime:
         except asyncio.CancelledError:
             return
         timeout = ClientTimeout(total=10)
+        ping_url = getattr(self, "_ping_url", self.settings.ping_url)
         async with ClientSession(timeout=timeout) as session:
             while not self._stopping.is_set():
                 try:
-                    async with session.get(self.settings.ping_url) as response:
+                    async with session.get(ping_url) as response:
                         log.info("Self-ping returned HTTP %d", response.status)
                 except asyncio.CancelledError:
                     return

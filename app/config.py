@@ -342,7 +342,9 @@ def load_settings(*, require_token: bool = True) -> Settings:
             "TELEGRAM_REQUEST_TIMEOUT", 60.0, minimum=1
         ),
         download_timeout=_env_float("DOWNLOAD_TIMEOUT", 60.0, minimum=1),
-        enable_self_ping=_env_bool("ENABLE_SELF_PING", False),
+        enable_self_ping=_env_bool(
+            "ENABLE_SELF_PING", bool(os.getenv("RENDER_EXTERNAL_URL"))
+        ),
         ping_url=_env("PING_URL"),
         self_ping_initial_delay=_env_float(
             "SELF_PING_INITIAL_DELAY", 15.0, minimum=0
