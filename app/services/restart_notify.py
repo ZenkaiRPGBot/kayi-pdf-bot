@@ -237,7 +237,7 @@ class RestartNotifier:
             return False
 
         has_reason = self.reason_path.exists()
-        commit = current_commit(self.root)
+        commit = await asyncio.to_thread(current_commit, self.root)
         if not has_reason and commit and self._read_last_commit() == commit:
             log.info("Restart notification skipped: commit %s already notified", commit[:7])
             return False
