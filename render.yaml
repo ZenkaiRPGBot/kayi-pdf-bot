@@ -45,3 +45,11 @@ services:
         value: "true"
       - key: LOG_LEVEL
         value: INFO
+      - key: ENABLE_SELF_PING
+        value: "true"
+      - key: PING_URL
+        value: https://kayi-pdf-bot.onrender.com/ping
+      - key: SELF_PING_INITIAL_DELAY
+        value: "60"
+      - key: SELF_PING_INTERVAL
+        value: "840"
